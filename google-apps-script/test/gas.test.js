@@ -1013,3 +1013,36 @@ test('the words the dropdowns use are the words that get written', () => {
   assert.equal(back.pri, 'Mid');
   assert.equal(back.s, 'Ongoing');
 });
+
+test('a write the sheet refuses leaves no wreckage behind', () => {
+  /* Google fills the cells up to the one it objects to and then throws, so a refused write
+     used to leave a line carrying nothing but an id. */
+  const { call, tokens, spreadsheet } = freshWorld();
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
+  /* A dropdown the script cannot satisfy at all, to force the failure. */
+  sheet.getRange(2, 12).setDataValidationList(['Shipped', 'Cancelled']);
+  const before = sheet.getLastRow();
+
+  const refused = call('saveItem', {
+    token: tokens.admin,
+    item: { type: 'Project', title: 'Will not fit', f1: 'Amina', s: 'Ongoing', pri: 'High' },
+  });
+
+  /* Either it fitted the dropdown or it failed - but either way, no half-row is left. */
+  if (refused.error) {
+    assert.equal(sheet.getLastRow(), before, 'the half-written line was taken out again');
+  }
+  const ids = call('listItems', { token: tokens.admin }).items.map(i => i.id);
+  assert.equal(ids.filter(id => !id).length, 0, 'and nothing nameless is listed');
+});
+
+test('a stray line left by an older failure can be cleared through the app', () => {
+  const { call, tokens, spreadsheet } = freshWorld();
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
+  sheet.appendRow(['T-9', '', '', '', '', '', '', '', '', '', '', '', '', '', '']);
+  const before = sheet.getLastRow();
+
+  const gone = call('deleteItem', { token: tokens.superadmin, id: 'T-9' });
+  assert.equal(gone.ok, true, JSON.stringify(gone.error || {}));
+  assert.equal(sheet.getLastRow(), before - 1);
+});

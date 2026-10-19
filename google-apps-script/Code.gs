@@ -1928,7 +1928,18 @@ function writeItemRow_(rowNumber, item) {
 function appendItem_(item) {
   var sh = itemSheet_();
   var row = sh.getLastRow() + 1;
-  writeItemRow_(row, item);
+
+  /* A write can still be refused - a dropdown nobody told us about, a protected range - and
+     Google fills the cells up to the one it objects to before throwing. That leaves a stray
+     line carrying nothing but an id. Clearing up after a failed append is this function's
+     job, not the next person's. */
+  try {
+    writeItemRow_(row, item);
+  } catch (err) {
+    try { if (sh.getLastRow() >= row) sh.deleteRow(row); } catch (ignored) {}
+    throw err;
+  }
+
   saveItemMeta_(item.id, {
     type: item.type, role: item.role || '',
     createdAt: item.createdAt || nowIso_(), createdBy: item.createdBy || '',
@@ -1958,8 +1969,19 @@ function updateItem_(item) {
  * delete in the page must never reach it. Those rows are shown, and can be edited, but they
  * can only be removed in the spreadsheet itself.
  */
+/** A line carrying an id and nothing else is wreckage from a refused write, never real work. */
+function isStrayRow_(item) {
+  if (item.title) return false;
+  var line = itemSheet_().getRange(item.__row, 1, 1, ITEM_WIDTH).getValues()[0];
+  for (var i = 0; i < line.length; i++) {
+    if (i === ITEM_COL.id - 1) continue;
+    if (String(line[i] === null || line[i] === undefined ? '' : line[i]).trim()) return false;
+  }
+  return true;
+}
+
 function deleteItem_(item) {
-  if (!item.__owned) {
+  if (!item.__owned && !isStrayRow_(item)) {
     throw fail_(400, 'not_ours', 'That row was already in the spreadsheet, so this app did not '
       + 'create it and will not delete it. Remove it in the sheet if you really mean to.');
   }
