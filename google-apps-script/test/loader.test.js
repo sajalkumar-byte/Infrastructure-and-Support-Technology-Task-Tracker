@@ -116,8 +116,10 @@ test('the roles still hold when loaded this way', () => {
 });
 
 test('the sample data and the self-check run through the loader', () => {
-  const { sandbox, call } = loadViaLoader();
+  const { sandbox, call, properties } = loadViaLoader();
   sandbox.setupTracker();
+  /* Sample rows land in the team's own tab, so they have to be asked for. */
+  properties.set('ALLOW_SAMPLE_DATA', 'yes');
   assert.equal(sandbox.addSampleData(), 13);
   assert.equal(sandbox.addSampleUsers(), 3);
   assert.equal(sandbox.checkDeployment().length, 0);

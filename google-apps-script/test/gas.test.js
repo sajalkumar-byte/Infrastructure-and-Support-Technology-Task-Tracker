@@ -35,13 +35,21 @@ test('setup creates the sheets and one super admin', () => {
   assert.equal(call('health').setupRequired, true);
   sandbox.setupTracker();
 
-  for (const name of ['Users', 'Items', 'Sessions', 'Requests', 'Archive', 'Audit']) {
-    assert.ok(spreadsheet.getSheetByName(name), `the ${name} tab should exist`);
+  /* The script's own tabs are created, named so nobody mistakes them for working tabs, and
+     hidden. The team's items tab is left exactly as it was - setup never writes to it. */
+  for (const name of ['Tracker Users', 'Tracker Item Meta', 'Tracker Sessions',
+                      'Tracker Requests', 'Tracker Archive', 'Tracker Audit']) {
+    const tab = spreadsheet.getSheetByName(name);
+    assert.ok(tab, `the ${name} tab should exist`);
+    assert.equal(tab.hidden, true, `${name} should be out of the way`);
   }
+  assert.ok(!spreadsheet.getSheetByName('Items'), 'no tab of its own for items');
+  const team = spreadsheet.getSheetByName('IS Project & Drive');
+  assert.equal(team.getLastRow(), 1, 'the team tab still holds only its header row');
   assert.equal(call('health').setupRequired, false);
 
   /* The password is hashed in the sheet, never stored as typed. */
-  const users = spreadsheet.getSheetByName('Users');
+  const users = spreadsheet.getSheetByName('Tracker Users');
   const row = users.getRange(2, 1, 1, 9).getValues()[0];
   assert.equal(row[0], 'admin@tracker.com');
   assert.match(String(row[3]), /^sha256\$\d+\$/);
@@ -338,37 +346,21 @@ test('unknown actions are reported, not silently ignored', () => {
 });
 
 /* ---------------------------------------------------------------- sample data helpers */
-test('addSampleData fills the sheet and is safe to run twice', () => {
-  const { call, sandbox, tokens } = freshWorld();
+test('addSampleData refuses to invent rows in a working tab, unless told to', () => {
+  /* The rows would land in the team's own tab, among real work. On a sheet made for trying
+     the app out that is the point; here it has to be asked for. */
+  const { sandbox, spreadsheet, properties, logs } = load();
+  sandbox.setupTracker();
 
-  const added = sandbox.addSampleData();
-  assert.equal(added, 13, 'all thirteen sample rows should be written');
-
-  const items = call('listItems', { token: tokens.viewer }).items;
-  assert.equal(items.length, 13);
-  assert.equal(items.filter(i => i.type === 'Project').length, 5);
-  assert.equal(items.filter(i => i.type === 'Drive').length, 3);
-  assert.equal(items.filter(i => i.type === 'Task').length, 5);
-
-  /* ids are numbered per type and the fields the page needs are populated */
-  const dr = items.find(i => i.title === 'Core banking DR site');
-  assert.match(dr.id, /^P-\d+$/);
-  assert.equal(dr.s, 'Ongoing');
-  assert.equal(dr.pri, 'High');
-  assert.equal(dr.f1, 'Rafiqul Islam');
-  assert.ok(dr.ms.includes('\n'), 'milestones are stored one per line');
-
-  /* the dashboard figures add up */
-  const stats = call('stats', { token: tokens.viewer });
-  assert.equal(stats.total, 13);
-  assert.equal(stats.byType.Project.total, 5);
-  assert.ok(stats.people.includes('Rafiqul Islam'));
-
-  /* running it again adds nothing */
   assert.equal(sandbox.addSampleData(), 0);
-  assert.equal(call('listItems', { token: tokens.viewer }).items.length, 13);
-});
+  assert.equal(spreadsheet.getSheetByName('IS Project & Drive').getLastRow(), 1, 'nothing written');
+  assert.match(logs.join(' '), /Refused/);
 
+  properties.set('ALLOW_SAMPLE_DATA', 'yes');
+  const added = sandbox.addSampleData();
+  assert.ok(added > 0, 'with permission it writes the samples');
+  assert.equal(sandbox.addSampleData(), 0, 'and running it again adds nothing');
+});
 test('addSampleUsers creates one working account per role', () => {
   const { call, sandbox } = freshWorld();
   assert.equal(sandbox.addSampleUsers(), 3);
@@ -598,25 +590,30 @@ test('a start and end date come back as the days that were entered', () => {
     'timestamps stay full ISO, they are not days');
 });
 
-test('a day typed into the sheet by hand is read as that day', () => {
-  /* Somebody editing the spreadsheet directly gets a real date in the cell, whatever the column
-     format says, so the read side has to cope with one on its own. */
+test('a date typed into the team tab by hand is read as that day', () => {
+  /* People type dates into this tab in several shapes. All of them have to come back as the
+     same day the page would show, with no timezone able to shift it. */
   const { call, tokens, spreadsheet } = freshWorld();
   const made = call('saveItem', {
     token: tokens.superadmin,
     item: { type: 'Task', title: 'Swap the UPS battery', f1: 'Riad', s: 'Ongoing', pri: 'Mid' },
   });
 
-  const sheet = spreadsheet.getSheetByName('Items');
-  const endColumn = 9;                                    // id,type,title,s,pri,f1,f2,sd,e
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
   const row = sheet.rows.findIndex(line => line[0] === made.id) + 1;
-  sheet.getRange(row, endColumn, 1, 1)
-    .setValues([[new Date(Date.parse('2026-11-05T00:00:00Z') - 6 * 3600 * 1000)]]);
+  const END = 10;                                      // their End Date column
 
-  const stored = call('listItems', { token: tokens.superadmin }).items.find(i => i.id === made.id);
-  assert.equal(stored.e, '2026-11-05');
+  for (const [typed, expected] of [
+    ['5-Nov-2026', '2026-11-05'],
+    ['12 Dec 2026', '2026-12-12'],
+    ['01.07.2026', '2026-07-01'],
+    ['2026-08-09', '2026-08-09'],
+  ]) {
+    sheet.getRange(row, END, 1, 1).setValues([[typed]]);
+    const back = call('listItems', { token: tokens.superadmin }).items.find(i => i.id === made.id);
+    assert.equal(back.e, expected, `typed as ${typed}`);
+  }
 });
-
 test('setup seeds both of the accounts the sign-in page offers', () => {
   /* The page lists a super admin and an Admin whether or not a server is connected. An Admin
      that existed only in the browser could sign in offline, create a project, and leave it on
@@ -640,9 +637,13 @@ test('setup seeds both of the accounts the sign-in page offers', () => {
 });
 
 /* ---------------------------------------------------------------- THE ROLE TABS */
-test('every role gets its own tab, and one per type it may create', () => {
+test('the role tabs are built only when they are asked for', () => {
   const { sandbox, spreadsheet } = load();
   sandbox.setupTracker();
+
+  /* Setup adds nothing to a workbook people keep by hand. */
+  assert.ok(!spreadsheet.getSheetByName('Admin data'), 'setup does not add view tabs');
+  sandbox.rebuildViews();
 
   const names = spreadsheet.getSheets().map(sh => sh.getName());
   for (const expected of [
@@ -661,14 +662,18 @@ test('every role gets its own tab, and one per type it may create', () => {
 test('a role tab shows that role its own rows, split by type', () => {
   const { sandbox, spreadsheet } = load();
   sandbox.setupTracker();
+  sandbox.rebuildViews();
 
   const role = name => spreadsheet.getSheetByName(name).getRange(2, 1).getFormula();
 
-  /* The role column is the seventeenth, so the views filter on Q. */
-  assert.match(role('Admin data'), /FILTER\(Items!A2:Q, Items!Q2:Q="admin"\)/);
-  assert.match(role('Admin Projects'), /Items!Q2:Q="admin", Items!B2:B="Project"/);
-  assert.match(role('Admin Recurring'), /Items!B2:B="Drive"/);
-  assert.match(role('Superuser Tasks'), /Items!Q2:Q="superuser", Items!B2:B="Task"/);
+  /* Which role created a row is the script's own bookkeeping, so the view joins the team's
+     tab to the hidden meta tab by id rather than reading a column added to their sheet. */
+  const admin = role('Admin data');
+  assert.match(admin, /FILTER\('IS Project & Drive'!A2:O/);
+  assert.match(admin, /COUNTIFS\('Tracker Item Meta'!\$A\$2:\$A, 'IS Project & Drive'!A2:A, 'Tracker Item Meta'!\$B\$2:\$B, "admin"\)>0/);
+  assert.match(role('Admin Projects'), /'IS Project & Drive'!B2:B="Project"/);
+  assert.match(role('Admin Recurring'), /'IS Project & Drive'!B2:B="Drive"/);
+  assert.match(role('Superuser Tasks'), /"superuser"\)>0, 'IS Project & Drive'!B2:B="Task"/);
   /* Grouped by type, then by id, and an empty tab rather than an error when there is nothing. */
   assert.match(role('Viewer data'), /^=IFERROR\(SORT\(.*, 2, TRUE, 1, TRUE\), ""\)$/);
 });
@@ -676,10 +681,11 @@ test('a role tab shows that role its own rows, split by type', () => {
 test('the accounts tab never repeats a password', () => {
   const { sandbox, spreadsheet } = load();
   sandbox.setupTracker();
+  sandbox.rebuildViews();
   const formula = spreadsheet.getSheetByName('Accounts by role').getRange(2, 1).getFormula();
-  const passwordColumn = 'Users!' + String.fromCharCode(65 + 3);   // email,name,role,password
+  const passwordColumn = "'Tracker Users'!" + String.fromCharCode(65 + 3);  // email,name,role,password
   assert.ok(!formula.includes(passwordColumn + '2:'), 'the password column must be left out');
-  assert.match(formula, /Users!C2:C/);                              // the role is there
+  assert.match(formula, /'Tracker Users'!C2:C/);                            // the role is there
 });
 
 test('an item records the role that created it, and editing does not rewrite it', () => {
@@ -702,28 +708,27 @@ test('an item records the role that created it, and editing does not rewrite it'
   assert.equal(edited.updatedBy, 'amina@example.com');
 });
 
-test('rows written before the role column existed are put on the right tab', () => {
+test('a row created before roles were recorded is put on the right tab', () => {
   const { call, tokens, sandbox, spreadsheet } = freshWorld();
   const made = call('saveItem', {
     token: tokens.admin,
     item: { type: 'Project', title: 'Core banking upgrade', f1: 'Amina', s: 'Ongoing', pri: 'High' },
   });
 
-  /* Blank the role, the way a sheet filled in by an earlier version would be. */
-  const sheet = spreadsheet.getSheetByName('Items');
-  const line = sheet.rows.findIndex(r => r[0] === made.id);
-  sheet.rows[line][16] = '';
+  /* Blank the role in the script's own bookkeeping, as an older version would have left it. */
+  const meta = spreadsheet.getSheetByName('Tracker Item Meta');
+  const line = meta.rows.findIndex(r => r[0] === made.id);
+  meta.rows[line][1] = '';
   assert.equal(call('listItems', { token: tokens.admin }).items.find(i => i.id === made.id).role, '');
 
-  const filled = sandbox.fillInItemRoles_();
-  assert.equal(filled, 1);
+  assert.equal(sandbox.fillInItemRoles_(), 1);
   assert.equal(call('listItems', { token: tokens.admin }).items.find(i => i.id === made.id).role,
     'admin', 'the role comes from whoever created it');
 });
-
 test('a tab somebody typed over comes back when the views are rebuilt', () => {
   const { sandbox, spreadsheet } = load();
   sandbox.setupTracker();
+  sandbox.rebuildViews();
 
   const tab = spreadsheet.getSheetByName('Admin Projects');
   tab.getRange(2, 1, 1, 1).setValues([['somebody pasted this over the formula']]);
@@ -746,7 +751,7 @@ test('chat: two people hold a conversation, and it is stored in the sheet', () =
   assert.equal(sent.readAt, null);
 
   /* It is a row in Messages like anything else, so the sheet is still the whole database. */
-  const rows = spreadsheet.getSheetByName('Messages').rows;
+  const rows = spreadsheet.getSheetByName('Tracker Messages').rows;
   assert.equal(rows.length, 2, 'a header row and the message');
 
   const reply = call('chatSend', {
@@ -831,4 +836,131 @@ test('chat: removing an account takes its conversations with it', () => {
   assert.equal(call('chatUnread', { token: tokens.viewer }).unread, 0);
   const left = call('chatContacts', { token: tokens.admin }).contacts.map(c => c.email);
   assert.ok(!left.includes('sohel@example.com'));
+});
+
+/* ------------------------------------------- LIVING IN SOMEBODY ELSE'S WORKBOOK */
+
+/** Put a few rows in the team's tab the way the team would have: by hand, before the app. */
+function workbookWithTeamRows() {
+  const world = freshWorld();
+  const sheet = world.spreadsheet.getSheetByName('IS Project & Drive');
+  /* ID, Type, Impact, FY, Title, Activity, F1, F2, Start, End, Duration, Status, Stakeholder, Budget, Remarks */
+  sheet.appendRow(['P-1', 'Project', 'High', '2024', 'MDM', '*PoC closure', 'Mehedi', 'Osman',
+    '12-Jun-2024', '30-Jun-2027', 1113, 'Ongoing', 'MF Tech', '', '']);
+  sheet.appendRow(['P-2', 'Project', '', '2024', 'AMD laptop PoC', '* PoC successful', 'Mehedi', '',
+    '1-Sep-2024', '31-Mar-2025', 211, 'Done', 'MF TECH & OPS', 80000, '']);
+  sheet.appendRow(['D-1', 'Drive', 'Mid', '2025', 'Monthly patching', '', 'Rafiqul', '',
+    '1-Jan-2025', '', '', 'Ongoing', 'Infrastructure', '', '']);
+  return world;
+}
+
+test('the team rows already in the workbook are read, not rewritten', () => {
+  const { call, tokens, spreadsheet } = workbookWithTeamRows();
+  const before = JSON.stringify(spreadsheet.getSheetByName('IS Project & Drive').rows);
+
+  const items = call('listItems', { token: tokens.superadmin }).items;
+  assert.deepEqual(items.map(i => i.id), ['P-1', 'P-2', 'D-1']);
+  assert.equal(items[0].title, 'MDM');
+  assert.equal(items[0].sd, '2024-06-12', 'their date format is understood');
+  assert.equal(items[0].pri, 'High', 'Impact is the priority');
+  assert.equal(items[2].type, 'Drive');
+
+  assert.equal(JSON.stringify(spreadsheet.getSheetByName('IS Project & Drive').rows), before,
+    'reading changed nothing at all');
+});
+
+test('a new item is written into the team tab, in the team columns', () => {
+  const { call, tokens, spreadsheet } = workbookWithTeamRows();
+  const made = call('saveItem', {
+    token: tokens.admin,
+    item: {
+      type: 'Task', title: 'Replace UPS battery', f1: 'Sohel', f2: 'Azmir', s: 'Ongoing',
+      pri: 'High', sd: '2026-10-01', e: '2026-10-21', sh: 'Facilities', ms: 'Quote - Done', rm: 'urgent',
+    },
+  });
+
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
+  const line = sheet.rows.find(r => r[0] === made.id);
+  assert.ok(line, 'the row is in the team tab');
+  assert.equal(line[1], 'Task', 'tasks go in this tab too, told apart by Type');
+  assert.equal(line[2], 'High');                       // Impact
+  assert.equal(line[4], 'Replace UPS battery');        // Title
+  assert.equal(line[5], 'Quote - Done');               // Activity/Milestone
+  assert.equal(line[6], 'Sohel');                      // Focal-1
+  assert.equal(line[7], 'Azmir');                      // Focal-2
+  assert.equal(line[10], 20, 'Duration is worked out for them');
+  assert.equal(line[11], 'Ongoing');                   // Status
+  assert.equal(line[12], 'Facilities');                // Stakeholder
+  assert.equal(line[14], 'urgent');                    // Remarks
+  assert.equal(line.length, 15, 'not one column more than they had');
+
+  /* And it reads back as the same day it was given. */
+  const back = call('listItems', { token: tokens.admin }).items.find(i => i.id === made.id);
+  assert.equal(back.sd, '2026-10-01');
+  assert.equal(back.e, '2026-10-21');
+});
+
+test('new ids carry on from the numbering already in the sheet', () => {
+  const { call, tokens } = workbookWithTeamRows();
+  /* P-1 and P-2 are theirs, so the next project must be P-3 and must not land on either. */
+  const project = call('saveItem', {
+    token: tokens.admin, item: { type: 'Project', title: 'New project', f1: 'Amina' },
+  });
+  assert.equal(project.id, 'P-3');
+
+  const drive = call('saveItem', {
+    token: tokens.admin, item: { type: 'Drive', title: 'New drive', f1: 'Amina' },
+  });
+  assert.equal(drive.id, 'D-2');
+
+  const ids = call('listItems', { token: tokens.admin }).items.map(i => i.id);
+  assert.equal(new Set(ids).size, ids.length, 'no id is used twice');
+});
+
+test('editing an item leaves the columns the app does not own alone', () => {
+  const { call, tokens, spreadsheet } = workbookWithTeamRows();
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
+
+  call('saveItem', { token: tokens.admin, id: 'P-2', item: { s: 'Ongoing', rm: 'reopened' } });
+
+  const line = sheet.rows.find(r => r[0] === 'P-2');
+  assert.equal(line[11], 'Ongoing', 'the status changed');
+  assert.equal(line[14], 'reopened', 'the remark changed');
+  assert.equal(line[3], '2024', 'FY is left as they set it');
+  assert.equal(line[13], 80000, 'and the budget is never touched');
+});
+
+test('a row the app did not create cannot be deleted through the app', () => {
+  const { call, tokens, spreadsheet } = workbookWithTeamRows();
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
+  const before = sheet.rows.length;
+
+  const refused = call('deleteItem', { token: tokens.superadmin, id: 'P-1' });
+  assert.equal(refused.error.code, 'not_ours');
+  assert.match(refused.error.message, /Remove it in the sheet/);
+  assert.equal(sheet.rows.length, before, 'their row is still there');
+
+  /* One the app created is its own to remove. */
+  const mine = call('saveItem', {
+    token: tokens.admin, item: { type: 'Task', title: 'Temporary', f1: 'Amina' },
+  });
+  assert.equal(sheet.rows.length, before + 1);
+  assert.equal(call('deleteItem', { token: tokens.superadmin, id: mine.id }).ok, true);
+  assert.equal(sheet.rows.length, before, 'and only that one went');
+});
+
+test('the app keeps its own bookkeeping out of the team tab', () => {
+  const { call, tokens, spreadsheet } = workbookWithTeamRows();
+  call('saveItem', { token: tokens.superuser, item: { type: 'Task', title: 'Mine', f1: 'Sohel' } });
+
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
+  assert.equal(sheet.getRange(1, 1, 1, 20).getValues()[0].filter(String).length, 15,
+    'no column was added to their header row');
+
+  /* Who made it, when, and with which role is recorded in the script's own hidden tab. */
+  const meta = spreadsheet.getSheetByName('Tracker Item Meta');
+  const row = meta.rows.find(r => r[0] === 'T-1');
+  assert.ok(row, 'the bookkeeping row exists');
+  assert.equal(row[1], 'superuser');
+  assert.equal(row[6], 'yes', 'marked as one of ours');
 });

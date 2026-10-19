@@ -31,6 +31,7 @@ class FakeRange {
   constructor(sheet, row, col, numRows, numCols) {
     Object.assign(this, { sheet, row, col, numRows, numCols });
   }
+  getValue() { return this.getValues()[0][0]; }
   getValues() {
     const out = [];
     for (let r = 0; r < this.numRows; r++) {
@@ -95,13 +96,18 @@ class FakeSheet {
     }
     return 0;
   }
-  getRange(row, col, numRows, numCols) { return new FakeRange(this, row, col, numRows, numCols); }
+  /* Apps Script lets the last two go, meaning a single cell; the stub has to as well. */
+  getRange(row, col, numRows, numCols) {
+    return new FakeRange(this, row, col, numRows === undefined ? 1 : numRows,
+      numCols === undefined ? 1 : numCols);
+  }
   appendRow(values) {
     /* A value appended to a column formatted as plain text stays text, as in Sheets. */
     this.rows[this.getLastRow()] = values.map((v, c) => asSheetsWouldStore(v, this.formats[c]));
   }
   deleteRow(index) { this.rows.splice(index - 1, 1); }
   setFrozenRows() { return this; }
+  hideSheet() { this.hidden = true; return this; }
   getName() { return this.name; }
 }
 
@@ -117,6 +123,15 @@ class FakeSpreadsheet {
 /* ---------- load Code.gs with the Apps Script services replaced ---------- */
 function load({ logs = [], outbox = [] } = {}) {
   const spreadsheet = new FakeSpreadsheet();
+
+  /* The workbook the script is a guest in. The team's own tab exists before the script runs,
+     with their fifteen headings and their column order - that is the whole situation the
+     adapter has to cope with, so the tests start from it rather than from an empty file. */
+  const TEAM_TAB = 'IS Project & Drive';
+  const TEAM_HEADERS = ['ID', 'Type', 'Impact', 'FY', 'Title (with Link)', 'Activity/Milestone',
+    'Focal-1', 'Focal-2', 'Start Date', 'End Date', 'Duration', 'Status', 'Stakeholder',
+    'Budget (If any)', 'Remarks'];
+  spreadsheet.insertSheet(TEAM_TAB).getRange(1, 1, 1, TEAM_HEADERS.length).setValues([TEAM_HEADERS]);
   const properties = new Map();
   const cache = new Map();            // key -> {value, until}
   let uuidCounter = 0;
@@ -236,7 +251,7 @@ function load({ logs = [], outbox = [] } = {}) {
     return JSON.parse(output.getContent());
   };
 
-  return { sandbox, call, spreadsheet, properties, cache, logs, outbox };
+  return { sandbox, call, spreadsheet, properties, cache, logs, outbox, TEAM_TAB, TEAM_HEADERS };
 }
 
 module.exports = { load };

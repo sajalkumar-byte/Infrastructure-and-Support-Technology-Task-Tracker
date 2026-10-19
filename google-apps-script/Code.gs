@@ -36,15 +36,18 @@
 /* Configuration                                                          */
 /* ===================================================================== */
 
+/* The tabs this script owns outright. They are created hidden and prefixed, so a workbook
+   people keep by hand does not fill up with the software's plumbing. The items themselves are
+   NOT here - they live in the tab the team already uses, see the adapter further down. */
 var SHEETS = {
-  users:    { name: 'Users',    headers: ['email', 'name', 'role', 'password', 'externalId', 'createdAt', 'createdBy', 'updatedAt', 'lastLogin'] },
-  items:    { name: 'Items',    headers: ['id', 'type', 'title', 's', 'pri', 'f1', 'f2', 'sd', 'e', 'sh', 'ms', 'rm', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'role'] },
-  sessions: { name: 'Sessions', headers: ['tokenHash', 'email', 'createdAt', 'expiresAt', 'userAgent'] },
-  requests: { name: 'Requests', headers: ['id', 'email', 'name', 'at'] },
-  archive:  { name: 'Archive',  headers: ['id', 'rows', 'at'] },
-  resets:   { name: 'Resets',   headers: ['email', 'codeHash', 'expiresAt', 'attempts', 'createdAt'] },
-  audit:    { name: 'Audit',    headers: ['at', 'actor', 'role', 'action', 'target', 'detail'] },
-  messages: { name: 'Messages', headers: ['id', 'conversation', 'fromEmail', 'toEmail', 'body', 'at', 'readAt'] }
+  users:    { name: 'Tracker Users',    headers: ['email', 'name', 'role', 'password', 'externalId', 'createdAt', 'createdBy', 'updatedAt', 'lastLogin'] },
+  itemmeta: { name: 'Tracker Item Meta', headers: ['id', 'role', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'owned'] },
+  sessions: { name: 'Tracker Sessions', headers: ['tokenHash', 'email', 'createdAt', 'expiresAt', 'userAgent'] },
+  requests: { name: 'Tracker Requests', headers: ['id', 'email', 'name', 'at'] },
+  archive:  { name: 'Tracker Archive',  headers: ['id', 'rows', 'at'] },
+  resets:   { name: 'Tracker Resets',   headers: ['email', 'codeHash', 'expiresAt', 'attempts', 'createdAt'] },
+  audit:    { name: 'Tracker Audit',    headers: ['at', 'actor', 'role', 'action', 'target', 'detail'] },
+  messages: { name: 'Tracker Messages', headers: ['id', 'conversation', 'fromEmail', 'toEmail', 'body', 'at', 'readAt'] }
 };
 
 var ROLES = ['superadmin', 'admin', 'superuser', 'viewer'];
@@ -108,18 +111,28 @@ function columnLetter_(index) {
   return letters;
 }
 
-/** The address of one Items column, as a whole-column range: role -> "Items!Q2:Q". */
-function itemsColumn_(header) {
-  var letter = columnLetter_(SHEETS.items.headers.indexOf(header));
-  return "Items!" + letter + "2:" + letter;
+/** A tab name as a formula writes it: quoted, because these have spaces and an ampersand. */
+function quoteSheet_(name) {
+  return "'" + String(name).replace(/'/g, "''") + "'";
 }
 
+/**
+ * One role's rows, pulled live out of the team's tab.
+ *
+ * Which role created a row is the script's own bookkeeping, kept in its hidden meta tab
+ * rather than in a column added to their sheet - so the view has to join the two by id.
+ * COUNTIFS takes the whole id column as its criteria and answers per row, which is what
+ * makes that join possible in a single formula.
+ */
 function viewFormula_(view) {
-  var headers = SHEETS.items.headers;
-  var rows = "Items!A2:" + columnLetter_(headers.length - 1);
-  var filter = "FILTER(" + rows + ", " + itemsColumn_('role') + '="' + view.role + '"';
-  if (view.type) filter += ", " + itemsColumn_('type') + '="' + view.type + '"';
-  filter += ")";
+  var items = quoteSheet_(itemSheetName_());
+  var meta = quoteSheet_(SHEETS.itemmeta.name);
+  var rows = items + '!A2:' + columnLetter_(ITEM_WIDTH - 1);
+  var match = 'COUNTIFS(' + meta + '!$A$2:$A, ' + items + '!A2:A, '
+    + meta + '!$B$2:$B, "' + view.role + '")>0';
+  var filter = 'FILTER(' + rows + ', ' + match;
+  if (view.type) filter += ', ' + items + '!B2:B="' + view.type + '"';
+  filter += ')';
   /* Grouped by type, then in the order the ids were given out. A role with nothing to show
      gets an empty tab rather than #N/A. */
   return '=IFERROR(SORT(' + filter + ', 2, TRUE, 1, TRUE), "")';
@@ -132,11 +145,12 @@ function accountsFormula_() {
   var headers = SHEETS.users.headers;
   var last = columnLetter_(headers.length - 1);
   var keep = [];
+  var users = quoteSheet_(SHEETS.users.name);
   headers.forEach(function (header, i) {
-    if (header !== 'password') keep.push('Users!' + columnLetter_(i) + '2:' + columnLetter_(i));
+    if (header !== 'password') keep.push(users + '!' + columnLetter_(i) + '2:' + columnLetter_(i));
   });
   /* Everything but the password column, which no view has any business repeating. */
-  return '=IFERROR(SORT(FILTER({' + keep.join(', ') + '}, Users!A2:A<>""), 3, TRUE, 1, TRUE), "")';
+  return '=IFERROR(SORT(FILTER({' + keep.join(', ') + '}, ' + users + '!A2:A<>""), 3, TRUE, 1, TRUE), "")';
 }
 
 /**
@@ -145,7 +159,8 @@ function accountsFormula_() {
  */
 function rebuildViews() {
   var ss = spreadsheet_();
-  var itemHeaders = SHEETS.items.headers;
+  /* The views repeat the team's own headings, so a view reads like the tab it came from. */
+  var itemHeaders = itemSheet_().getRange(1, 1, 1, ITEM_WIDTH).getValues()[0];
   var made = [];
 
   viewTabs_().forEach(function (view) {
@@ -239,8 +254,12 @@ function setupTracker() {
     Logger.log('Super admin created.\n  email:    %s\n  password: %s\nChange it after the first sign-in.', email, password);
   }
 
-  Logger.log('Roles filled in on %s existing row(s).', fillInItemRoles_());
-  rebuildViews();
+  /* The items tab is the team's, so setup only checks it is there and reports what it found.
+     It writes nothing into it, and it does not build the role views: those add tabs to a
+     workbook people keep by hand, so they are opt-in - run rebuildViews when you want them. */
+  var items = readItems_();
+  Logger.log('Items tab: "%s" - %s row(s) read, none changed.', itemSheetName_(), items.length);
+  Logger.log('Run rebuildViews() if you want a tab per role. Nothing else here touches your tabs.');
 
   Logger.log('Spreadsheet: %s', ss.getUrl());
   Logger.log('Now use Deploy → New deployment → Web app (Execute as: Me, Access: Anyone).');
@@ -253,6 +272,17 @@ function setupTracker() {
  * is already there is skipped. Delete them from the Items tab whenever you want them gone.
  */
 function addSampleData() {
+  /* Sample rows go into the team's own tab, where real work lives. That is fine on a sheet
+     made for trying the app out and quite wrong on this one, so it refuses unless somebody
+     deliberately sets ALLOW_SAMPLE_DATA to yes in the script properties. */
+  var allow = '';
+  try { allow = PropertiesService.getScriptProperties().getProperty('ALLOW_SAMPLE_DATA') || ''; } catch (err) {}
+  if (String(allow).toLowerCase() !== 'yes') {
+    Logger.log('Refused: this would write made-up rows into "%s", which is a real working tab.'
+      + NL + 'Set the script property ALLOW_SAMPLE_DATA to yes if you really want them.', itemSheetName_());
+    return 0;
+  }
+
   var samples = [
     /* type, title, status, priority, focal-1, focal-2, start, end, stakeholder, milestones */
     ['Project', 'Core banking DR site', 'Ongoing', 'High', 'Rafiqul Islam', 'Nadia Rahman', '2026-07-01', '2026-12-31', 'Operations', 'Requirement analysis - Done\nSite survey - Done\nHardware delivery - Ongoing\nFailover test - Listed'],
@@ -336,6 +366,18 @@ function checkDeployment() {
     }
   });
 
+  /* The items tab belongs to the team, so it is checked rather than created. */
+  try {
+    var sh = itemSheet_();
+    var headers = sh.getRange(1, 1, 1, ITEM_WIDTH).getValues()[0];
+    if (String(headers[ITEM_COL.id - 1]).toLowerCase().indexOf('id') === -1 ||
+        String(headers[ITEM_COL.title - 1]).toLowerCase().indexOf('title') === -1) {
+      problems.push('The columns of "' + itemSheetName_() + '" are not where this expects them: '
+        + 'column A should be the ID and column E the Title.');
+    }
+    Logger.log('items tab: "%s" with %s row(s)', itemSheetName_(), Math.max(sh.getLastRow() - 1, 0));
+  } catch (err) { problems.push(err.message); }
+
   var users = readTable_('users');
   if (!users.length) problems.push('No accounts yet - run setupTracker');
   users.forEach(function (u) {
@@ -346,10 +388,13 @@ function checkDeployment() {
 
   Logger.log('health:   %s', JSON.stringify(ACTIONS.health()));
   Logger.log('accounts: %s     items: %s', users.length, readTable_('items').length);
-  try {
-    Logger.log('email quota left today: %s (used for \'forgot password\' codes)',
-               MailApp.getRemainingDailyQuota());
-  } catch (err) { problems.push('Email is not available: ' + err.message); }
+  if (ALLOW_EMAIL_RESET) {
+    try {
+      Logger.log('email quota left today: %s', MailApp.getRemainingDailyQuota());
+    } catch (err) { problems.push('Email is not available: ' + err.message); }
+  } else {
+    Logger.log('email: switched off, which is what ALLOW_EMAIL_RESET false means');
+  }
 
   if (problems.length) {
     Logger.log('PROBLEMS FOUND:');
@@ -1543,6 +1588,310 @@ function spreadsheet_() {
     ' (Extensions → Apps Script), or set a SHEET_ID script property to the id in the sheet URL.');
 }
 
+/* ======================= the workbook this tracker lives in =======================
+
+   This script is a guest in a workbook people already keep by hand: eighteen tabs, hundreds
+   of rows, formulas, merged headings. Two rules follow from that, and the code below exists
+   to keep them.
+
+     1. Nothing that was already here is ever deleted, cleared or reformatted. Not a row, not
+        a column, not a header. The script writes only where it is told to, and only rows it
+        created itself can be removed by it.
+
+     2. The items the page shows live in the tab people already use for them - the one with
+        "Drive" in its name - written in that tab's own fifteen columns, in its own date
+        format. Projects, recurring drives AND tasks all land there, told apart by the Type
+        column, which is what that column is for.
+
+   Everything the backend needs for itself - accounts, sessions, chat, the audit trail, and
+   the bookkeeping that says which rows it owns - goes in its own hidden tabs, named so they
+   are obviously the software's and never mistaken for the real work. */
+
+var ITEM_SHEET_DEFAULT = 'IS Project & Drive';
+
+/** The tab holding the items. Override with the ITEM_SHEET script property. */
+function itemSheetName_() {
+  try {
+    var set = PropertiesService.getScriptProperties().getProperty('ITEM_SHEET');
+    if (set) return set;
+  } catch (err) {}
+  return ITEM_SHEET_DEFAULT;
+}
+
+/* Their fifteen columns, in their order. The script fills the ones it manages and leaves the
+   rest exactly as it found them - Budget and FY above all, which belong to whoever has been
+   keeping this by hand. */
+var ITEM_COL = {
+  id: 1, type: 2, impact: 3, fy: 4, title: 5, activity: 6, f1: 7, f2: 8,
+  start: 9, end: 10, duration: 11, status: 12, stakeholder: 13, budget: 14, remarks: 15
+};
+var ITEM_WIDTH = 15;
+
+function itemSheet_() {
+  var name = itemSheetName_();
+  var sh = spreadsheet_().getSheetByName(name);
+  if (!sh) {
+    throw new Error('The tab "' + name + '" is not in this spreadsheet. Check the name, or set '
+      + 'the ITEM_SHEET script property to the tab the items should go in.');
+  }
+  return sh;
+}
+
+/* ---------- reading their values without assuming how they were typed ---------- */
+
+/** A cell holding a day, whatever shape it is in, as yyyy-MM-dd. Empty when it is not a date. */
+function toIsoDay_(value) {
+  if (value instanceof Date) {
+    try { return Utilities.formatDate(value, timeZone_(), 'yyyy-MM-dd'); } catch (err) { return ''; }
+  }
+  var text = String(value === null || value === undefined ? '' : value).trim();
+  if (!text) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+
+  var months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+
+  /* 12-Jun-2024, 1 Sep 2024, 2-July-2025, 26 Feb 2025 */
+  var named = text.match(/^(\d{1,2})[-\s.]([A-Za-z]{3,9})[-\s.](\d{2,4})$/);
+  if (named) {
+    var m = months[named[2].slice(0, 3).toLowerCase()];
+    if (m) {
+      var y = Number(named[3]);
+      if (y < 100) y += 2000;
+      return y + '-' + pad(m) + '-' + pad(Number(named[1]));
+    }
+  }
+  /* 01.07.2024 and 01/07/2024, read day first, the way this workbook writes them */
+  var numeric = text.match(/^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$/);
+  if (numeric) {
+    var yy = Number(numeric[3]);
+    if (yy < 100) yy += 2000;
+    return yy + '-' + pad(Number(numeric[2])) + '-' + pad(Number(numeric[1]));
+  }
+  return '';
+}
+
+/**
+ * How the dates in their tab are stored, so a new row is written the same way.
+ *
+ * A column people have typed into can hold real dates or plain text that reads like one. Write
+ * a Date into a column of text and it shows up in a different format from every row above it;
+ * write text into a column of dates and their sorting and formulas stop seeing a date. So the
+ * column is sampled once, and whatever is already there is what gets written.
+ */
+function itemDateStyle_() {
+  var sh = itemSheet_();
+  var last = Math.min(sh.getLastRow(), 60);
+  for (var row = 2; row <= last; row++) {
+    var value = sh.getRange(row, ITEM_COL.start).getValue();
+    if (value instanceof Date) return 'date';
+    if (String(value || '').trim()) return 'text';
+  }
+  return 'date';
+}
+
+/** A day written the way the column already writes them. */
+function dayForSheet_(iso) {
+  if (!iso) return '';
+  var when = fromIsoDay_(iso);
+  if (!when) return '';
+  if (itemDateStyle_() === 'date') return when;
+  try { return Utilities.formatDate(when, timeZone_(), 'd-MMM-yyyy'); }
+  catch (err) { return iso; }
+}
+
+/** A day back out as a real date, anchored at midday so no timezone can shift it. */
+function fromIsoDay_(iso) {
+  var text = String(iso || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return '';
+  var parts = text.split('-');
+  return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12, 0, 0);
+}
+
+function daysBetween_(startIso, endIso) {
+  if (!startIso || !endIso) return '';
+  var a = fromIsoDay_(startIso), b = fromIsoDay_(endIso);
+  if (!a || !b) return '';
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+
+/* The vocabularies differ a little between the page and a tab people type into by hand, so
+   both are accepted on the way in. Nothing is corrected in place: a cell is only rewritten
+   when somebody edits that item in the page. */
+function readType_(value) {
+  var t = String(value || '').trim().toLowerCase();
+  if (t.indexOf('drive') === 0 || t.indexOf('recurring') === 0) return 'Drive';
+  if (t.indexOf('task') === 0) return 'Task';
+  return 'Project';
+}
+
+function readStatus_(value) {
+  var s = String(value || '').trim().toLowerCase();
+  if (!s) return 'Listed';
+  if (s.indexOf('on-going') === 0 || s.indexOf('ongoing') === 0 || s.indexOf('on going') === 0) return 'Ongoing';
+  if (s.indexOf('done') === 0 || s.indexOf('complete') === 0) return 'Done';
+  if (s.indexOf('hold') !== -1) return 'On Hold';
+  if (s.indexOf('clos') === 0 || s.indexOf('cancel') === 0) return 'Closed';
+  return 'Listed';
+}
+
+function readPriority_(value) {
+  var p = String(value || '').trim().toLowerCase();
+  if (p.indexOf('high') === 0 || p === '1') return 'High';
+  if (p.indexOf('low') === 0 || p === '3') return 'Low';
+  return 'Mid';
+}
+
+/* ---------- the bookkeeping the script keeps about itself ----------
+
+   Who created a row, when, with which role, and whether this script put it there at all.
+   None of it belongs in their fifteen columns, so it lives in a hidden tab of its own and
+   their sheet gains not a single column. */
+
+/** id -> {role, createdAt, createdBy, updatedAt, updatedBy, owned} */
+function itemMeta_() {
+  var map = {};
+  readTable_('itemmeta').forEach(function (row) {
+    if (row.id) map[String(row.id)] = row;
+  });
+  return map;
+}
+
+function saveItemMeta_(id, patch) {
+  var rows = readTable_('itemmeta');
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].id) !== String(id)) continue;
+    var merged = rows[i];
+    Object.keys(patch).forEach(function (k) { merged[k] = patch[k]; });
+    updateRowAt_('itemmeta', i, merged);
+    return merged;
+  }
+  var fresh = { id: id, role: '', createdAt: '', createdBy: '', updatedAt: '', updatedBy: '', owned: '' };
+  Object.keys(patch).forEach(function (k) { fresh[k] = patch[k]; });
+  appendRow_('itemmeta', fresh);
+  return fresh;
+}
+
+function dropItemMeta_(id) {
+  var rows = readTable_('itemmeta');
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i].id) === String(id)) { deleteRowAt_('itemmeta', i); return true; }
+  }
+  return false;
+}
+
+/* ---------- items, read from their tab ---------- */
+
+function readItems_() {
+  var sh = itemSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var values = sh.getRange(2, 1, last - 1, ITEM_WIDTH).getValues();
+  var meta = itemMeta_();
+  var out = [];
+
+  values.forEach(function (line, index) {
+    var id = String(line[ITEM_COL.id - 1] || '').trim();
+    var title = String(line[ITEM_COL.title - 1] || '').trim();
+    /* A line with neither an id nor a title is a spacer, not a record. */
+    if (!id && !title) return;
+
+    var mine = meta[id] || {};
+    out.push({
+      id: id,
+      type: readType_(line[ITEM_COL.type - 1]),
+      title: title,
+      s: readStatus_(line[ITEM_COL.status - 1]),
+      pri: readPriority_(line[ITEM_COL.impact - 1]),
+      f1: String(line[ITEM_COL.f1 - 1] || '').trim(),
+      f2: String(line[ITEM_COL.f2 - 1] || '').trim(),
+      sd: toIsoDay_(line[ITEM_COL.start - 1]),
+      e: toIsoDay_(line[ITEM_COL.end - 1]),
+      sh: String(line[ITEM_COL.stakeholder - 1] || '').trim(),
+      ms: String(line[ITEM_COL.activity - 1] || '').trim(),
+      rm: String(line[ITEM_COL.remarks - 1] || '').trim(),
+      createdAt: mine.createdAt || '',
+      createdBy: mine.createdBy || '',
+      updatedAt: mine.updatedAt || '',
+      updatedBy: mine.updatedBy || '',
+      role: mine.role || '',
+      __row: index + 2,
+      /* Rows that were here before this script are shown and can be edited, never deleted. */
+      __owned: String(mine.owned || '') === 'yes'
+    });
+  });
+  return out;
+}
+
+/**
+ * Write an item into their fifteen columns, leaving every column the script does not manage
+ * exactly as it was.
+ */
+function writeItemRow_(rowNumber, item) {
+  var sh = itemSheet_();
+  var range = sh.getRange(rowNumber, 1, 1, ITEM_WIDTH);
+  var line = range.getValues()[0];
+  var set = function (col, value) { line[col - 1] = value; };
+
+  set(ITEM_COL.id, item.id);
+  set(ITEM_COL.type, item.type);
+  set(ITEM_COL.impact, item.pri || '');
+  set(ITEM_COL.title, item.title || '');
+  set(ITEM_COL.activity, item.ms || '');
+  set(ITEM_COL.f1, item.f1 || '');
+  set(ITEM_COL.f2, item.f2 || '');
+  set(ITEM_COL.start, dayForSheet_(item.sd));
+  set(ITEM_COL.end, dayForSheet_(item.e));
+  set(ITEM_COL.duration, daysBetween_(item.sd, item.e));
+  set(ITEM_COL.status, item.s || '');
+  set(ITEM_COL.stakeholder, item.sh || '');
+  set(ITEM_COL.remarks, item.rm || '');
+  /* FY is filled only when empty, so a year somebody chose is never overruled. */
+  if (!String(line[ITEM_COL.fy - 1] || '').trim() && item.sd) set(ITEM_COL.fy, item.sd.slice(0, 4));
+
+  range.setValues([line]);
+}
+
+function appendItem_(item) {
+  var sh = itemSheet_();
+  var row = sh.getLastRow() + 1;
+  writeItemRow_(row, item);
+  saveItemMeta_(item.id, {
+    role: item.role || '', createdAt: item.createdAt || nowIso_(), createdBy: item.createdBy || '',
+    updatedAt: '', updatedBy: '', owned: 'yes'
+  });
+  return row;
+}
+
+function updateItem_(item) {
+  var row = item.__row;
+  if (!row) {
+    var all = readItems_();
+    for (var i = 0; i < all.length; i++) if (all[i].id === item.id) { row = all[i].__row; break; }
+  }
+  if (!row) throw fail_(404, 'not_found', 'That row is no longer in the spreadsheet');
+  writeItemRow_(row, item);
+  saveItemMeta_(item.id, {
+    role: item.role || '', updatedAt: item.updatedAt || nowIso_(), updatedBy: item.updatedBy || ''
+  });
+}
+
+/**
+ * Remove a row - but only one this script put there.
+ *
+ * Everything that was in the workbook beforehand belongs to the people who keep it, and a
+ * delete in the page must never reach it. Those rows are shown, and can be edited, but they
+ * can only be removed in the spreadsheet itself.
+ */
+function deleteItem_(item) {
+  if (!item.__owned) {
+    throw fail_(400, 'not_ours', 'That row was already in the spreadsheet, so this app did not '
+      + 'create it and will not delete it. Remove it in the sheet if you really mean to.');
+  }
+  itemSheet_().deleteRow(item.__row);
+  dropItemMeta_(item.id);
+}
+
 function sheet_(key) {
   var spec = SHEETS[key];
   var ss = spreadsheet_();
@@ -1551,6 +1900,8 @@ function sheet_(key) {
     sh = ss.insertSheet(spec.name);
     sh.getRange(1, 1, 1, spec.headers.length).setValues([spec.headers]).setFontWeight('bold');
     sh.setFrozenRows(1);
+    /* Out of the way: this is the software's plumbing, not anybody's working tab. */
+    try { sh.hideSheet(); } catch (err) {}
     spec.headers.forEach(function (header, i) {
       if (DAY_COLUMNS[header]) {
         try { sh.getRange(2, i + 1, Math.max(sh.getMaxRows() - 1, 1), 1).setNumberFormat('@'); }
@@ -1563,6 +1914,9 @@ function sheet_(key) {
 
 /** Read a whole tab as an array of objects keyed by the header row. */
 function readTable_(key) {
+  /* Items are not a tab of this script's own making - they are read out of the team's tab,
+     in the team's columns. Everything else is a plain table. */
+  if (key === 'items') return readItems_();
   var spec = SHEETS[key];
   var sh = sheet_(key);
   var last = sh.getLastRow();
@@ -1643,38 +1997,27 @@ function ensureHeaders_(key) {
 
 /**
  * Fill in the role of whoever created each item that does not have one yet, by looking their
- * address up in Users. This is what puts rows written before the role column existed onto the
- * right tab instead of leaving them out of every view.
+ * address up in the accounts tab.
+ *
+ * This writes to the script's own meta tab, never to the team's. A row created before the
+ * roles were recorded simply has no role, and would be missing from every role view until
+ * this fills it in.
  */
 function fillInItemRoles_() {
-  var sh = sheet_('items');
-  var last = sh.getLastRow();
-  if (last < 2) return 0;
-
-  var headers = SHEETS.items.headers;
-  var roleColumn = headers.indexOf('role') + 1;
-  var createdByColumn = headers.indexOf('createdBy') + 1;
-
   var roleOf = {};
   readTable_('users').forEach(function (u) { roleOf[normaliseEmail_(u.email)] = u.role; });
 
-  /* Read the two columns straight from the sheet, so a row stays matched with its own line
-     even if somebody left a blank one in the middle. */
-  var creators = sh.getRange(2, createdByColumn, last - 1, 1).getValues();
-  var roles = sh.getRange(2, roleColumn, last - 1, 1).getValues();
-
   var filled = 0;
-  for (var i = 0; i < roles.length; i++) {
-    if (String(roles[i][0] || '')) continue;
-    var role = roleOf[normaliseEmail_(creators[i][0])] || '';
-    if (!role) continue;
-    roles[i][0] = role;
+  readTable_('itemmeta').forEach(function (row, index) {
+    if (String(row.role || '')) return;
+    var role = roleOf[normaliseEmail_(row.createdBy)] || '';
+    if (!role) return;
+    row.role = role;
+    updateRowAt_('itemmeta', index, row);
     filled += 1;
-  }
-  if (filled) sh.getRange(2, roleColumn, roles.length, 1).setValues(roles);
+  });
   return filled;
 }
-
 function rowValues_(key, object) {
   return SHEETS[key].headers.map(function (h) {
     var v = object[h];
@@ -1683,15 +2026,25 @@ function rowValues_(key, object) {
 }
 
 function appendRow_(key, object) {
+  if (key === 'items') { appendItem_(object); return; }
   sheet_(key).appendRow(rowValues_(key, object));
 }
 
 function updateRowAt_(key, index, object) {
+  if (key === 'items') { updateItem_(object); return; }
   var spec = SHEETS[key];
   sheet_(key).getRange(index + 2, 1, 1, spec.headers.length).setValues([rowValues_(key, object)]);
 }
 
 function deleteRowAt_(key, index) {
+  if (key === 'items') {
+    /* The caller found this row in the list it just read, so read it the same way again and
+       let the adapter decide whether this script is allowed to remove it. */
+    var rows = readItems_();
+    if (!rows[index]) throw fail_(404, 'not_found', 'That row is no longer in the spreadsheet');
+    deleteItem_(rows[index]);
+    return;
+  }
   sheet_(key).deleteRow(index + 2);
 }
 
