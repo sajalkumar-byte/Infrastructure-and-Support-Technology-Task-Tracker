@@ -32,6 +32,16 @@ class FakeRange {
     Object.assign(this, { sheet, row, col, numRows, numCols });
   }
   getValue() { return this.getValues()[0][0]; }
+  /* A dropdown on a column, the way the real tab has one on Type. */
+  getDataValidation() {
+    const list = this.sheet.validations[this.col - 1];
+    if (!list) return null;
+    return {
+      getCriteriaType: () => 'VALUE_IN_LIST',
+      getCriteriaValues: () => [list.slice()],
+    };
+  }
+  setDataValidationList(values) { this.sheet.validations[this.col - 1] = values.slice(); return this; }
   getValues() {
     const out = [];
     for (let r = 0; r < this.numRows; r++) {
@@ -48,6 +58,13 @@ class FakeRange {
       while (this.sheet.rows.length <= target) this.sheet.rows.push([]);
       line.forEach((v, c) => {
         const column = this.col - 1 + c;
+        const list = this.sheet.validations[column];
+        if (list && target > 0 && String(v || '') && list.indexOf(String(v)) === -1) {
+          throw new Error('The data you entered in cell '
+            + String.fromCharCode(65 + column) + (target + 1)
+            + ' violates the data validation rules set on this cell. Please enter one of the '
+            + 'following values: ' + list.join(', ') + '.');
+        }
         this.sheet.rows[target][column] = asSheetsWouldStore(v, this.sheet.formats[column]);
         /* Typing a value over a formula removes the formula, here as in Sheets. */
         delete this.sheet.formulas[target + ',' + column];
@@ -80,7 +97,7 @@ class FakeRange {
 }
 
 class FakeSheet {
-  constructor(name) { this.name = name; this.rows = []; this.formats = []; this.formulas = {}; }
+  constructor(name) { this.name = name; this.rows = []; this.formats = []; this.formulas = {}; this.validations = []; }
   getMaxRows() { return Math.max(this.rows.length, 1000); }
   getLastColumn() {
     let width = 0;

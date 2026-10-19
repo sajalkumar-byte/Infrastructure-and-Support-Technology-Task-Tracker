@@ -718,7 +718,7 @@ test('a row created before roles were recorded is put on the right tab', () => {
   /* Blank the role in the script's own bookkeeping, as an older version would have left it. */
   const meta = spreadsheet.getSheetByName('Tracker Item Meta');
   const line = meta.rows.findIndex(r => r[0] === made.id);
-  meta.rows[line][1] = '';
+  meta.rows[line][2] = '';                                   // id, type, role, ...
   assert.equal(call('listItems', { token: tokens.admin }).items.find(i => i.id === made.id).role, '');
 
   assert.equal(sandbox.fillInItemRoles_(), 1);
@@ -882,7 +882,7 @@ test('a new item is written into the team tab, in the team columns', () => {
   const sheet = spreadsheet.getSheetByName('IS Project & Drive');
   const line = sheet.rows.find(r => r[0] === made.id);
   assert.ok(line, 'the row is in the team tab');
-  assert.equal(line[1], 'Task', 'tasks go in this tab too, told apart by Type');
+  assert.equal(line[1], 'Drive', 'the Type column has no Task, so a task is filed as a drive');
   assert.equal(line[2], 'High');                       // Impact
   assert.equal(line[4], 'Replace UPS battery');        // Title
   assert.equal(line[5], 'Quote - Done');               // Activity/Milestone
@@ -961,6 +961,55 @@ test('the app keeps its own bookkeeping out of the team tab', () => {
   const meta = spreadsheet.getSheetByName('Tracker Item Meta');
   const row = meta.rows.find(r => r[0] === 'T-1');
   assert.ok(row, 'the bookkeeping row exists');
-  assert.equal(row[1], 'superuser');
-  assert.equal(row[6], 'yes', 'marked as one of ours');
+  assert.equal(row[1], 'Task', 'what the page calls it, which the sheet cannot say');
+  assert.equal(row[2], 'superuser');
+  assert.equal(row[7], 'yes', 'marked as one of ours');
+});
+
+test('a task is filed under the Drive option, because that is all the dropdown allows', () => {
+  /* The real tab restricts Type to Drive or Project. Google rejects anything else outright -
+     the whole write fails - so a task goes in as a drive, and the page keeps calling it a
+     task because the script remembers that itself. */
+  const { call, tokens, spreadsheet } = freshWorld();
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
+  sheet.getRange(2, 2).setDataValidationList(['Drive', 'Project']);
+
+  const made = call('saveItem', {
+    token: tokens.admin,
+    item: { type: 'Task', title: 'Replace UPS battery', f1: 'Sohel', s: 'Ongoing', pri: 'Mid' },
+  });
+  assert.ok(!made.error, JSON.stringify(made.error || {}));
+  assert.equal(made.id, 'T-1', 'the id still says what it is');
+  assert.equal(made.type, 'Task', 'and so does the page');
+
+  const line = sheet.rows.find(r => r[0] === 'T-1');
+  assert.equal(line[1], 'Drive', 'while the cell holds a value the dropdown accepts');
+
+  const back = call('listItems', { token: tokens.admin }).items.find(i => i.id === 'T-1');
+  assert.equal(back.type, 'Task', 'it comes back as a task, not as a drive');
+});
+
+test('the words the dropdowns use are the words that get written', () => {
+  /* A workbook that says Medium rather than Mid, or On-Going rather than Ongoing, is written
+     in its own words instead of having the write refused. */
+  const { call, tokens, spreadsheet } = freshWorld();
+  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
+  sheet.getRange(2, 2).setDataValidationList(['Drive', 'Project']);
+  sheet.getRange(2, 3).setDataValidationList(['High', 'Medium', 'Low']);
+  sheet.getRange(2, 12).setDataValidationList(['On-Going', 'Done', 'On Hold', 'Listed', 'Closed']);
+
+  const made = call('saveItem', {
+    token: tokens.admin,
+    item: { type: 'Project', title: 'Core banking upgrade', f1: 'Amina', s: 'Ongoing', pri: 'Mid' },
+  });
+  assert.ok(!made.error, JSON.stringify(made.error || {}));
+
+  const line = sheet.rows.find(r => r[0] === made.id);
+  assert.equal(line[2], 'Medium', 'Mid is written as Medium here');
+  assert.equal(line[11], 'On-Going', 'and Ongoing as On-Going');
+
+  /* And both still read back as the page's own words. */
+  const back = call('listItems', { token: tokens.admin }).items.find(i => i.id === made.id);
+  assert.equal(back.pri, 'Mid');
+  assert.equal(back.s, 'Ongoing');
 });

@@ -41,7 +41,7 @@
    NOT here - they live in the tab the team already uses, see the adapter further down. */
 var SHEETS = {
   users:    { name: 'Tracker Users',    headers: ['email', 'name', 'role', 'password', 'externalId', 'createdAt', 'createdBy', 'updatedAt', 'lastLogin'] },
-  itemmeta: { name: 'Tracker Item Meta', headers: ['id', 'role', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'owned'] },
+  itemmeta: { name: 'Tracker Item Meta', headers: ['id', 'type', 'role', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'owned'] },
   sessions: { name: 'Tracker Sessions', headers: ['tokenHash', 'email', 'createdAt', 'expiresAt', 'userAgent'] },
   requests: { name: 'Tracker Requests', headers: ['id', 'email', 'name', 'at'] },
   archive:  { name: 'Tracker Archive',  headers: ['id', 'rows', 'at'] },
@@ -1735,6 +1735,72 @@ function readStatus_(value) {
   return 'Listed';
 }
 
+/* ---------- fitting what the page says into what the dropdowns allow ----------
+
+   The Type column of this tab is a dropdown with two choices, Drive and Project. There is no
+   Task, and Google refuses any other value outright - the whole write fails on the validation
+   rule. So a task is filed under Drive, which is what it is closest to and what was asked
+   for, and the script remembers in its own tab that the page calls it a Task. Nothing is lost:
+   the page still shows three kinds, the sheet still holds only the two it knows.
+
+   The same reading is applied to Impact and Status, so a workbook whose dropdown says
+   "Medium" rather than "Mid", or "On-Going" rather than "Ongoing", is written in its own
+   words instead of being refused. */
+
+function allowedValues_(column) {
+  try {
+    var rule = itemSheet_().getRange(2, column).getDataValidation();
+    if (!rule) return null;
+    if (String(rule.getCriteriaType()) !== 'VALUE_IN_LIST') return null;
+    var values = rule.getCriteriaValues()[0];
+    if (!values || !values.length) return null;
+    return values.map(function (v) { return String(v); });
+  } catch (err) { return null; }
+}
+
+/**
+ * The spelling this column will accept for a value, trying each preference in turn.
+ * Returns null when none of them fit, and the caller then leaves the cell alone rather than
+ * writing something the sheet would reject or, worse, something untrue.
+ */
+function fitToList_(preferences, allowed) {
+  if (!allowed) return preferences[0];
+  for (var i = 0; i < preferences.length; i++) {
+    var want = String(preferences[i]).toLowerCase().replace(/[^a-z]/g, '');
+    for (var j = 0; j < allowed.length; j++) {
+      if (String(allowed[j]).toLowerCase().replace(/[^a-z]/g, '') === want) return allowed[j];
+    }
+  }
+  return null;
+}
+
+function sheetType_(type) {
+  /* A task has no column of its own here, so it goes in as a drive - the instruction, and the
+     only choice the dropdown offers it. */
+  var order = type === 'Project' ? ['Project', 'Drive']
+    : type === 'Task' ? ['Drive', 'Project']
+    : ['Drive', 'Project'];
+  return fitToList_(order, allowedValues_(ITEM_COL.type));
+}
+
+function sheetPriority_(pri) {
+  var order = pri === 'High' ? ['High', 'Medium', 'Mid']
+    : pri === 'Low' ? ['Low', 'Medium', 'Mid']
+    : ['Mid', 'Medium', 'Moderate', 'Normal'];
+  return fitToList_(order, allowedValues_(ITEM_COL.impact));
+}
+
+function sheetStatus_(status) {
+  var orders = {
+    'Ongoing': ['Ongoing', 'On-Going', 'On Going', 'Running', 'In Progress'],
+    'Done': ['Done', 'Completed', 'Complete'],
+    'On Hold': ['On Hold', 'Hold', 'On-Hold'],
+    'Listed': ['Listed', 'Planned', 'Pending', 'To Do'],
+    'Closed': ['Closed', 'Cancelled', 'Canceled']
+  };
+  return fitToList_(orders[status] || [status], allowedValues_(ITEM_COL.status));
+}
+
 function readPriority_(value) {
   var p = String(value || '').trim().toLowerCase();
   if (p.indexOf('high') === 0 || p === '1') return 'High';
@@ -1766,7 +1832,7 @@ function saveItemMeta_(id, patch) {
     updateRowAt_('itemmeta', i, merged);
     return merged;
   }
-  var fresh = { id: id, role: '', createdAt: '', createdBy: '', updatedAt: '', updatedBy: '', owned: '' };
+  var fresh = { id: id, type: '', role: '', createdAt: '', createdBy: '', updatedAt: '', updatedBy: '', owned: '' };
   Object.keys(patch).forEach(function (k) { fresh[k] = patch[k]; });
   appendRow_('itemmeta', fresh);
   return fresh;
@@ -1797,9 +1863,12 @@ function readItems_() {
     if (!id && !title) return;
 
     var mine = meta[id] || {};
+    /* What the page calls it: its own record first, then the id it was given, and only then
+       the cell - which can never say "Task". */
+    var kind = mine.type || (id.indexOf('T-') === 0 ? 'Task' : '') || readType_(line[ITEM_COL.type - 1]);
     out.push({
       id: id,
-      type: readType_(line[ITEM_COL.type - 1]),
+      type: kind,
       title: title,
       s: readStatus_(line[ITEM_COL.status - 1]),
       pri: readPriority_(line[ITEM_COL.impact - 1]),
@@ -1833,9 +1902,13 @@ function writeItemRow_(rowNumber, item) {
   var line = range.getValues()[0];
   var set = function (col, value) { line[col - 1] = value; };
 
+  var keep = function (col, value) { if (value !== null && value !== undefined) set(col, value); };
+
   set(ITEM_COL.id, item.id);
-  set(ITEM_COL.type, item.type);
-  set(ITEM_COL.impact, item.pri || '');
+  /* A value the dropdown refuses would fail the whole write, so where nothing fits, the cell
+     is left as it was rather than filled with something untrue. */
+  keep(ITEM_COL.type, sheetType_(item.type));
+  keep(ITEM_COL.impact, item.pri ? sheetPriority_(item.pri) : '');
   set(ITEM_COL.title, item.title || '');
   set(ITEM_COL.activity, item.ms || '');
   set(ITEM_COL.f1, item.f1 || '');
@@ -1843,7 +1916,7 @@ function writeItemRow_(rowNumber, item) {
   set(ITEM_COL.start, dayForSheet_(item.sd));
   set(ITEM_COL.end, dayForSheet_(item.e));
   set(ITEM_COL.duration, daysBetween_(item.sd, item.e));
-  set(ITEM_COL.status, item.s || '');
+  keep(ITEM_COL.status, item.s ? sheetStatus_(item.s) : '');
   set(ITEM_COL.stakeholder, item.sh || '');
   set(ITEM_COL.remarks, item.rm || '');
   /* FY is filled only when empty, so a year somebody chose is never overruled. */
@@ -1857,7 +1930,8 @@ function appendItem_(item) {
   var row = sh.getLastRow() + 1;
   writeItemRow_(row, item);
   saveItemMeta_(item.id, {
-    role: item.role || '', createdAt: item.createdAt || nowIso_(), createdBy: item.createdBy || '',
+    type: item.type, role: item.role || '',
+    createdAt: item.createdAt || nowIso_(), createdBy: item.createdBy || '',
     updatedAt: '', updatedBy: '', owned: 'yes'
   });
   return row;
@@ -1872,7 +1946,8 @@ function updateItem_(item) {
   if (!row) throw fail_(404, 'not_found', 'That row is no longer in the spreadsheet');
   writeItemRow_(row, item);
   saveItemMeta_(item.id, {
-    role: item.role || '', updatedAt: item.updatedAt || nowIso_(), updatedBy: item.updatedBy || ''
+    type: item.type, role: item.role || '',
+    updatedAt: item.updatedAt || nowIso_(), updatedBy: item.updatedBy || ''
   });
 }
 
