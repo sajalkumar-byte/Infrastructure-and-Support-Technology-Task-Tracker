@@ -24,6 +24,17 @@ const View={
  toast(m){const t=document.createElement('div');t.className='toast align-items-center text-bg-dark border-0';t.setAttribute('role','status');
   t.innerHTML=`<div class="d-flex"><div class="toast-body"></div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>`;
   t.querySelector('.toast-body').textContent=m;$('#toasts').appendChild(t);t.addEventListener('hidden.bs.toast',()=>t.remove());new bootstrap.Toast(t,{delay:2200}).show()},
+ /* The flying overdue message. It names what is late and how late, offers the overdue list,
+    and leaves on its own - or when dismissed, or while the pointer rests on it, not at all. */
+ flyOverdue(list,total){
+  const box=$('#fly');if(!box)return;
+  const days=p=>Math.max(1,Math.round((today-new Date(p.e+'T00:00:00'))/86400000));
+  const rows=list.slice(0,3).map(p=>`<li><span class="text-truncate"><span class="id">${esc(p.id)}</span> ${esc(p.title)}</span><b class="text-nowrap">${days(p)} day${days(p)===1?'':'s'} late</b></li>`).join('');
+  box.innerHTML=`<div class="fly" role="alert"><div class="d-flex align-items-start gap-3"><span class="ic">⚠️</span><div class="flex-grow-1 min-w-0"><div class="fw-bold fs-6">${total} item${total===1?' is':'s are'} overdue</div><ul>${rows}</ul>${total>3?`<div class="small mt-1 opacity-75">and ${total-3} more</div>`:''}<div class="d-flex gap-2 mt-2"><button class="btn btn-sm btn-light fw-semibold" data-a="kpi" data-v="__over">View overdue</button><button class="btn btn-sm btn-outline-light" data-a="fly-close">Later</button></div></div><button class="btn-close btn-close-white" data-a="fly-close" aria-label="Dismiss"></button></div></div>`;
+  const el=box.firstElementChild,rest=()=>{clearTimeout(this._flyT);this._flyT=setTimeout(()=>this.hideFly(),12000)};
+  rest();el.onmouseenter=()=>clearTimeout(this._flyT);el.onmouseleave=rest},
+ hideFly(){const el=document.querySelector('#fly .fly');if(!el)return;clearTimeout(this._flyT);el.classList.add('out');setTimeout(()=>{if(el.parentNode)el.remove()},420)},
+
  /* An empty message hides the indicator entirely, dot and all. */
  status(t,ok){$('#snap').textContent=t||'';$('#lv').classList.toggle('off',!ok);$('#lv').classList.toggle('d-none',!t)},
  /* one-time behaviours: reveal-on-scroll for .a-up, click ripple on buttons, delegated Bootstrap tooltips */

@@ -146,7 +146,7 @@ const Presenter={
   if(remember&&this.isLocal())try{localStorage.setItem('tracker.session',u.email)}catch(e){}
   Model.start(e=>this.syncStatus(e));this.syncStatus();View.who(Model.session,this.usesPasswords());this.tab='overview';this.draw();
   this.startChat()},
- async signOut(){if(this.chat){this.chat.stop();this.chat=null}
+ async signOut(){View.hideFly();if(this.chat){this.chat.stop();this.chat=null}
   View.chatDock(false);this.CP='';this.CF='';
   if(this.isApi()){try{await Model.store.logout()}catch(e){}}
   Model.session=null;try{localStorage.removeItem('tracker.session')}catch(e){}View.who(null,this.usesPasswords());this.setGate('login')},
@@ -394,7 +394,7 @@ const Presenter={
  /* --- global events --- */
  bindEvents(){
   document.addEventListener('click',e=>{const t=e.target.closest('[data-a]');if(!t)return;const a=t.dataset.a,v=t.dataset.v;if(t.tagName==='A')e.preventDefault();
-   if(a==='go')this.go(v);else if(a==='kpi'){this.F.st=v;this.go(this.PT[this.tab]?this.tab:'projects')}else if(a==='person'){this.SEL=v;this.go('team')}
+   if(a==='go')this.go(v);else if(a==='kpi'){View.hideFly();this.F.st=v;this.go(this.PT[this.tab]?this.tab:'projects')}else if(a==='fly-close')View.hideFly();else if(a==='person'){this.SEL=v;this.go('team')}
    else if(a==='pf'){const[k,z]=v.split('|');if(k==='Task'){this.TF={q:'',who:'',st:z,n:100};this.go('tasks')}else{this.F={q:'',pri:'',who:'',st:z};this.go(PAGES[k].tab)}}
    else if(a==='open')this.openItem(v);else if(a==='new')this.openForm(null,v);else if(a==='export')this.export(v);else if(a==='theme')this.setTheme(v)
    else if(a==='users')this.openUsers();else if(a==='share')this.openShare();else if(a==='signout')this.signOut()
@@ -408,7 +408,24 @@ const Presenter={
   const back=$('#c_back');if(back)back.onclick=()=>this.backToContacts();
   const scrim=$('#chatscrim');if(scrim)scrim.onclick=()=>this.closeChat();
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&View.chatIsOpen()&&!document.querySelector('.modal.show'))this.closeChat()});
-  Model.onChange(()=>{if(Model.session)this.draw()})},
+  Model.onChange(()=>{if(Model.session){this.draw();this.announceOverdue()}})},
+
+ /* --- the flying overdue message ---
+    Sent when something is late that has not been announced in this session: on arrival, and
+    again only when a further item passes its end date. Not on every refresh - a warning that
+    repeats every few seconds stops being read. The ids announced are kept for the session, so
+    a reload does not repeat them either. */
+ ANNOUNCED:'tracker.overdue.announced',
+ announceOverdue(){
+  if(!Model.session||!Model.loaded)return;
+  const late=Model.items.filter(over).sort((a,b)=>a.e<b.e?-1:1);
+  if(!late.length){View.hideFly();return}
+  let seen=[];try{seen=JSON.parse(sessionStorage.getItem(this.ANNOUNCED)||'[]')}catch(e){}
+  const fresh=late.filter(p=>!seen.includes(p.id));
+  if(!fresh.length)return;
+  /* the newly late ones first, then the rest, so the first lines are the news */
+  View.flyOverdue(fresh.concat(late.filter(p=>!fresh.includes(p))),late.length);
+  try{sessionStorage.setItem(this.ANNOUNCED,JSON.stringify(late.map(p=>p.id)))}catch(e){}},
 
  /* --- is a server connected, and does the page say so --- */
  noticeOffline(detail,canRetry){View.setOfflineNotice(this.isLocal(),detail||'',!!canRetry)},
