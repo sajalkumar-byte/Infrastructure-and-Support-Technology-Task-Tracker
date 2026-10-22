@@ -41,7 +41,7 @@
    NOT here - they live in the tab the team already uses, see the adapter further down. */
 var SHEETS = {
   users:    { name: 'Tracker Users',    headers: ['email', 'name', 'role', 'password', 'externalId', 'createdAt', 'createdBy', 'updatedAt', 'lastLogin'] },
-  itemmeta: { name: 'Tracker Item Meta', headers: ['id', 'type', 'role', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'owned'] },
+  itemmeta: { name: 'Tracker Item Meta', headers: ['id', 'type', 'role', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'owned', 'ud'] },
   sessions: { name: 'Tracker Sessions', headers: ['tokenHash', 'email', 'createdAt', 'expiresAt', 'userAgent'] },
   requests: { name: 'Tracker Requests', headers: ['id', 'email', 'name', 'at'] },
   archive:  { name: 'Tracker Archive',  headers: ['id', 'rows', 'at'] },
@@ -217,6 +217,7 @@ var RESET_REQUEST_WINDOW_MIN = 60;
 /* ===================================================================== */
 
 function setupTracker() {
+  resetMemo_();
   var ss = spreadsheet_();
   Object.keys(SHEETS).forEach(function (key) { sheet_(key); });
   /* All three are safe to repeat, and together they bring a sheet made by an earlier version
@@ -459,6 +460,7 @@ function doGet(e) {
 
 /** Every action is dispatched here, so GET and POST behave identically. */
 function handle_(body, e) {
+  resetMemo_();                      // a request starts with nothing remembered from the last
   var action = String(body.action || '');
   try {
     var handler = ACTIONS[action];
@@ -677,7 +679,12 @@ var ACTIONS = {
   /* ---------- items ---------- */
 
   listItems: function (body, ctx) {
-    return { items: readTable_('items').map(itemOut_), role: ctx.user.role };
+    var rev = currentRev_();
+    var asked = String(body.rev || '');
+    if (asked && asked === rev && Date.now() - Number(rev) < REV_FRESH_MS) {
+      return { unchanged: true, rev: rev };
+    }
+    return { items: readTable_('items').map(itemOut_), role: ctx.user.role, rev: rev };
   },
 
   saveItem: function (body, ctx) {
@@ -709,7 +716,9 @@ var ACTIONS = {
         created.role = ctx.user.role;
         created.updatedAt = '';
         created.updatedBy = '';
+        if (created.type === 'Drive') created.e = '';        // recurring: no end date
         appendRow_('items', created);
+        bumpRev_();
         audit_('item.create', ctx.user.email, ctx.user.role, created.id, created.type + ': ' + created.title);
         return itemOut_(created);
       }
@@ -723,7 +732,9 @@ var ACTIONS = {
       Object.keys(patch).forEach(function (k) { merged[k] = patch[k]; });
       merged.updatedAt = nowIso_();
       merged.updatedBy = ctx.user.email;
+      if (merged.type === 'Drive') merged.e = '';           // recurring: no end date
       updateRowAt_('items', index, merged);
+      bumpRev_();
       audit_('item.update', ctx.user.email, ctx.user.role, merged.id, Object.keys(patch).join(','));
       return itemOut_(merged);
     });
@@ -739,6 +750,7 @@ var ACTIONS = {
       assertWrite_(ctx.user.role, rows[index].type);
       var gone = rows[index];
       deleteRowAt_('items', index);
+      bumpRev_();
       audit_('item.delete', ctx.user.email, ctx.user.role, gone.id, gone.type + ': ' + gone.title);
       return { ok: true, id: gone.id };
     });
@@ -1501,7 +1513,7 @@ function itemOut_(row) {
     id: row.id, type: row.type, title: row.title, s: row.s, pri: row.pri,
     f1: row.f1, f2: row.f2, sd: row.sd, e: row.e, sh: row.sh, ms: row.ms, rm: row.rm,
     createdAt: row.createdAt, createdBy: row.createdBy,
-    updatedAt: row.updatedAt, updatedBy: row.updatedBy, role: row.role || ''
+    updatedAt: row.updatedAt, updatedBy: row.updatedBy, role: row.role || '', ud: row.ud || ''
   };
 }
 
@@ -1538,11 +1550,11 @@ function cleanItem_(input, partial) {
   [['f2', 120], ['sh', 200], ['rm', 2000], ['ms', 8000]].forEach(function (pair) {
     if (!partial || has(pair[0])) out[pair[0]] = text(input[pair[0]], pair[1]);
   });
-  ['sd', 'e'].forEach(function (key) {
+  ['sd', 'e', 'ud'].forEach(function (key) {
     if (!partial || has(key)) {
       var v = text(input[key], 10);
       if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
-        throw fail_(400, 'bad_date', (key === 'sd' ? 'Start' : 'End') + ' date must look like 2026-10-14');
+        throw fail_(400, 'bad_date', (key === 'sd' ? 'Start' : key === 'ud' ? 'Update' : 'End') + ' date must look like 2026-10-14');
       }
       out[key] = v;
     }
@@ -1626,6 +1638,30 @@ function spreadsheet_() {
    the bookkeeping that says which rows it owns - goes in its own hidden tabs, named so they
    are obviously the software's and never mistaken for the real work. */
 
+/* Per-request memory. Every web request is its own execution, so this starts empty and is
+   forgotten at the end: within one request the same tab is read once, the same dropdown asked
+   once, the same column sampled once. A save used to read the meta tab three times and sample
+   a date column cell by cell - sixty round trips for one answer. */
+var MEMO_ = { tables: {}, validation: {}, dateStyle: {}, conformed: {} };
+function forget_(key) { delete MEMO_.tables[key]; }
+function resetMemo_() { MEMO_ = { tables: {}, validation: {}, dateStyle: {}, conformed: {} }; }
+
+/* A counter the sheet keeps of its own changes. Every write through this script bumps it, so a
+   page can ask "anything new since N?" and be told no in a moment, instead of having three tabs
+   read for it every few seconds. Edits made by hand in the sheet do not bump it, so a page
+   rereads fully anyway once the counter is more than ninety seconds old. */
+var REV_FRESH_MS = 90000;
+function bumpRev_() {
+  var rev = String(Date.now());
+  try { CacheService.getScriptCache().put('rev', rev, 21600); } catch (err) {}
+  try { PropertiesService.getScriptProperties().setProperty('REV', rev); } catch (err) {}
+  return rev;
+}
+function currentRev_() {
+  try { var cached = CacheService.getScriptCache().get('rev'); if (cached) return cached; } catch (err) {}
+  try { return PropertiesService.getScriptProperties().getProperty('REV') || ''; } catch (err) { return ''; }
+}
+
 var ITEM_SHEET_DEFAULT = 'IS Project & Drive';
 var TASK_SHEET_DEFAULT = 'Individual Task List';
 
@@ -1646,7 +1682,11 @@ function taskSheetName_() { return scriptProperty_('TASK_SHEET') || TASK_SHEET_D
  * to their own tab as drives either way.
  */
 function driveRowsShowAs_() {
-  return /^task$/i.test(scriptProperty_('DRIVE_ROWS_SHOW_AS')) ? 'Task' : 'Drive';
+  /* The workbook has no notion of a recurring item, so a row the team marked Drive is listed
+     with the tasks, which is where they asked for it. Set DRIVE_ROWS_SHOW_AS to Drive to list
+     them as recurring instead. Items the page itself created as recurring stay recurring
+     either way - the page's own record of what it made wins. */
+  return /^(drive|recurring)$/i.test(scriptProperty_('DRIVE_ROWS_SHOW_AS')) ? 'Drive' : 'Task';
 }
 
 /* The fifteen columns of each tab, in the team's order. The script fills the ones it manages
@@ -1733,13 +1773,21 @@ function daysBetween_(startIso, endIso) {
  * column is sampled, and whatever is already there is what gets written.
  */
 function dateStyle_(sh, column) {
+  var key = sh.getName() + ':' + column;
+  if (MEMO_.dateStyle[key]) return MEMO_.dateStyle[key];
+  var style = 'date';
   var last = Math.min(sh.getLastRow(), 60);
-  for (var row = 2; row <= last; row++) {
-    var value = sh.getRange(row, column).getValue();
-    if (value instanceof Date) return 'date';
-    if (String(value || '').trim()) return 'text';
+  if (last >= 2) {
+    /* The whole sample in one read, not one request per cell. */
+    var values = sh.getRange(2, column, last - 1, 1).getValues();
+    for (var i = 0; i < values.length; i++) {
+      var value = values[i][0];
+      if (value instanceof Date) { style = 'date'; break; }
+      if (String(value || '').trim()) { style = 'text'; break; }
+    }
   }
-  return 'date';
+  MEMO_.dateStyle[key] = style;
+  return style;
 }
 
 /** A day written the way the column already writes them. */
@@ -1787,6 +1835,13 @@ function readPriority_(value) {
    the cell is left as it was rather than filled with something untrue. */
 
 function allowedValues_(sh, column) {
+  var key = sh.getName() + ':' + column;
+  if (key in MEMO_.validation) return MEMO_.validation[key];
+  MEMO_.validation[key] = allowedValuesUncached_(sh, column);
+  return MEMO_.validation[key];
+}
+
+function allowedValuesUncached_(sh, column) {
   try {
     var rule = sh.getRange(2, column).getDataValidation();
     if (!rule) return null;
@@ -1858,7 +1913,7 @@ function saveItemMeta_(id, patch) {
     updateRowAt_('itemmeta', i, merged);
     return merged;
   }
-  var fresh = { id: id, type: '', role: '', createdAt: '', createdBy: '', updatedAt: '', updatedBy: '', owned: '' };
+  var fresh = { id: id, type: '', role: '', createdAt: '', createdBy: '', updatedAt: '', updatedBy: '', owned: '', ud: '' };
   Object.keys(patch).forEach(function (k) { fresh[k] = patch[k]; });
   appendRow_('itemmeta', fresh);
   return fresh;
@@ -1909,9 +1964,10 @@ function readProjectRows_(meta) {
 
     var mine = meta[id] || {};
     var kind = readType_(line[ITEM_COL.type - 1]);
-    /* The page's own record of what it is wins over the two words the cell can hold. */
-    if (mine.type === 'Task' || (!mine.type && id.indexOf('T-') === 0)) kind = 'Task';
-    else if (kind === 'Drive' && showDrivesAs === 'Task') kind = 'Task';
+    /* The page's own record of what it made wins over the two words the cell can hold. */
+    if (mine.type) kind = mine.type;
+    else if (id.indexOf('T-') === 0) kind = 'Task';
+    else if (kind === 'Drive') kind = showDrivesAs;
 
     out.push({
       id: id, type: kind, title: title,
@@ -1926,7 +1982,7 @@ function readProjectRows_(meta) {
       rm: String(line[ITEM_COL.remarks - 1] || '').trim(),
       createdAt: mine.createdAt || '', createdBy: mine.createdBy || '',
       updatedAt: mine.updatedAt || '', updatedBy: mine.updatedBy || '',
-      role: mine.role || '',
+      role: mine.role || '', ud: mine.ud || '',
       __sheet: 'items', __row: index + 2,
       /* Rows that were here before this script are shown and can be edited, never deleted. */
       __owned: String(mine.owned || '') === 'yes'
@@ -1974,7 +2030,7 @@ function readTaskRows_(meta) {
       rm: String(line[TASK_COL.remarks - 1] || '').trim(),
       createdAt: mine.createdAt || '', createdBy: mine.createdBy || '',
       updatedAt: mine.updatedAt || '', updatedBy: mine.updatedBy || '',
-      role: mine.role || '',
+      role: mine.role || '', ud: mine.ud || '',
       __sheet: 'tasks', __row: row,
       __owned: String(mine.owned || '') === 'yes'
     });
@@ -2000,8 +2056,11 @@ function writeProjectRow_(rowNumber, item) {
   set(ITEM_COL.f1, item.f1 || '');
   set(ITEM_COL.f2, item.f2 || '');
   set(ITEM_COL.start, dayForColumn_(sh, ITEM_COL.start, item.sd));
-  set(ITEM_COL.end, dayForColumn_(sh, ITEM_COL.end, item.e));
-  set(ITEM_COL.duration, daysBetween_(item.sd, item.e));
+  /* A recurring item has a start date and an update date, never an end date, so End Date and
+     Duration are left empty for it. */
+  var recurring = item.type === 'Drive';
+  set(ITEM_COL.end, recurring ? '' : dayForColumn_(sh, ITEM_COL.end, item.e));
+  set(ITEM_COL.duration, recurring ? '' : daysBetween_(item.sd, item.e));
   keep(ITEM_COL.status, item.s ? sheetStatus_(sh, ITEM_COL.status, item.s) : '');
   set(ITEM_COL.stakeholder, item.sh || '');
   set(ITEM_COL.remarks, item.rm || '');
@@ -2062,7 +2121,7 @@ function appendItem_(item) {
   }
 
   recordMeta_(item.id, {
-    type: item.type, role: item.role || '',
+    type: item.type, role: item.role || '', ud: item.ud || '',
     createdAt: item.createdAt || nowIso_(), createdBy: item.createdBy || '',
     updatedAt: '', updatedBy: '', owned: 'yes'
   });
@@ -2080,7 +2139,7 @@ function updateItem_(item) {
   if (!row) throw fail_(404, 'not_found', 'That row is no longer in the spreadsheet');
   if (where === 'tasks') writeTaskRow_(row, item, false); else writeProjectRow_(row, item);
   recordMeta_(item.id, {
-    type: item.type, role: item.role || '',
+    type: item.type, role: item.role || '', ud: item.ud || '',
     updatedAt: item.updatedAt || nowIso_(), updatedBy: item.updatedBy || ''
   });
 }
@@ -2125,6 +2184,8 @@ function deleteItem_(item) {
  * script's own tabs ever come through here; the team's tabs are never touched.
  */
 function conformTable_(sh, spec) {
+  if (MEMO_.conformed[spec.name]) return false;
+  MEMO_.conformed[spec.name] = true;
   var width = Math.max(sh.getLastColumn(), spec.headers.length, 1);
   var header = sh.getRange(1, 1, 1, width).getValues()[0].map(function (h) { return String(h || '').trim(); });
   var same = spec.headers.every(function (h, i) { return header[i] === h; })
@@ -2146,6 +2207,10 @@ function conformTable_(sh, spec) {
   }
   if (last >= 1) sh.getRange(1, 1, last, width).clearContent();
   sh.getRange(1, 1, 1, spec.headers.length).setValues([spec.headers]).setFontWeight('bold');
+  spec.headers.forEach(function (header, i) {
+    if (!DAY_COLUMNS[header]) return;
+    try { sh.getRange(2, i + 1, Math.max(sh.getMaxRows() - 1, 1), 1).setNumberFormat('@'); } catch (err) {}
+  });
   if (moved.length) sh.getRange(2, 1, moved.length, spec.headers.length).setValues(moved);
   return true;
 }
@@ -2175,7 +2240,8 @@ function sheet_(key) {
 function readTable_(key) {
   /* Items are not a tab of this script's own making - they are read out of the team's tab,
      in the team's columns. Everything else is a plain table. */
-  if (key === 'items') return readItems_();
+  if (MEMO_.tables[key]) return MEMO_.tables[key];
+  if (key === 'items') { MEMO_.tables.items = readItems_(); return MEMO_.tables.items; }
   var spec = SHEETS[key];
   var sh = sheet_(key);
   var last = sh.getLastRow();
@@ -2196,7 +2262,7 @@ function readTable_(key) {
 }
 
 /* Columns the page sends as a plain day, "2026-10-01", with no time and no timezone. */
-var DAY_COLUMNS = { sd: true, e: true };
+var DAY_COLUMNS = { sd: true, e: true, ud: true };
 
 /** The spreadsheet's own timezone – the one Sheets uses when it parses a typed date. */
 function timeZone_() {
@@ -2276,17 +2342,20 @@ function rowValues_(key, object) {
 }
 
 function appendRow_(key, object) {
+  forget_(key);
   if (key === 'items') { appendItem_(object); return; }
   sheet_(key).appendRow(rowValues_(key, object));
 }
 
 function updateRowAt_(key, index, object) {
+  forget_(key);
   if (key === 'items') { updateItem_(object); return; }
   var spec = SHEETS[key];
   sheet_(key).getRange(index + 2, 1, 1, spec.headers.length).setValues([rowValues_(key, object)]);
 }
 
 function deleteRowAt_(key, index) {
+  forget_(key);
   if (key === 'items') {
     /* The caller found this row in the list it just read, so read it the same way again and
        let the adapter decide whether this script is allowed to remove it. */
@@ -2299,6 +2368,7 @@ function deleteRowAt_(key, index) {
 }
 
 function writeTable_(key, rows) {
+  forget_(key);
   var spec = SHEETS[key];
   var sh = sheet_(key);
   var last = sh.getLastRow();

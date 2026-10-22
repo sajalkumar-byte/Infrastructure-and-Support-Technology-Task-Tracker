@@ -69,6 +69,8 @@ test('the tasks tab is read as tasks, alongside the projects and drives', () => 
   assert.equal(t1.e, '2025-12-30');
   assert.equal(t1.s, 'Done');
   assert.equal(items.find(i => i.id === 'T-3').sh, 'HR', 'Requester is the stakeholder');
+  assert.equal(items.find(i => i.id === 'D-1').type, 'Task',
+    'the workbook has no recurring items, so a row marked Drive is listed with the tasks');
 });
 
 test('a new task is written into the tasks tab, in its columns, carrying on the serial', () => {
@@ -129,12 +131,86 @@ test('a task the team typed cannot be deleted through the app; one the app made 
   assert.equal(tasks.rows.length, before);
 });
 
-test('a team row marked Drive shows as a drive, or as a task when asked', () => {
-  const { call, tokens, properties } = workbook();
-  assert.equal(call('listItems', { token: tokens.superadmin }).items.find(i => i.id === 'D-1').type, 'Drive');
+test('a team row marked Drive is a task by default, a drive when asked, and never changes an item the page made', () => {
+  const { call, tokens, properties, spreadsheet } = workbook();
+  const find = id => call('listItems', { token: tokens.superadmin }).items.find(i => i.id === id);
+  assert.equal(find('D-1').type, 'Task');
 
-  properties.set('DRIVE_ROWS_SHOW_AS', 'Task');
-  assert.equal(call('listItems', { token: tokens.superadmin }).items.find(i => i.id === 'D-1').type, 'Task');
+  properties.set('DRIVE_ROWS_SHOW_AS', 'Drive');
+  assert.equal(find('D-1').type, 'Drive');
+  properties.delete('DRIVE_ROWS_SHOW_AS');
+
+  /* One the page created as recurring stays recurring whatever the setting says: the page's
+     own record of what it made wins over the one word the cell can hold. */
+  const mine = call('saveItem', {
+    token: tokens.admin,
+    item: { type: 'Drive', title: 'Monthly backup test', f1: 'Amina', sd: '2026-10-01', ud: '2026-10-22' },
+  });
+  assert.ok(!mine.error, JSON.stringify(mine.error || {}));
+  assert.equal(find(mine.id).type, 'Drive');
+  assert.equal(spreadsheet.getSheetByName(PROJECTS).rows.find(r => r[0] === mine.id)[1], 'Drive',
+    'and in the sheet it is a Drive, which is what that dropdown has for it');
+});
+
+test('a recurring item has a start date and an update date, and no end date anywhere', () => {
+  const { call, tokens, spreadsheet } = workbook();
+  const made = call('saveItem', {
+    token: tokens.admin,
+    item: { type: 'Drive', title: 'Weekly patching', f1: 'Amina', sd: '2026-10-01', e: '2026-12-31', ud: '2026-10-22' },
+  });
+  assert.ok(!made.error, JSON.stringify(made.error || {}));
+  assert.equal(made.ud, '2026-10-22');
+  assert.equal(made.e, '', 'an end date sent for a recurring item is dropped');
+
+  const line = spreadsheet.getSheetByName(PROJECTS).rows.find(r => r[0] === made.id);
+  assert.equal(line[8] instanceof Date || String(line[8]).length > 0, true, 'Start Date is written');
+  assert.equal(line[9], '', 'End Date stays empty');
+  assert.equal(line[10], '', 'and so does Duration');
+
+  const back = call('listItems', { token: tokens.admin }).items.find(i => i.id === made.id);
+  assert.equal(back.ud, '2026-10-22', 'the update date comes back');
+  assert.equal(back.e, '');
+});
+
+/* ------------------------------------------------------------- not reading it all again */
+
+test('a page that asks with the last change counter is told when nothing changed', () => {
+  const { call, tokens } = workbook();
+  const first = call('listItems', { token: tokens.admin });
+  assert.ok(Array.isArray(first.items));
+
+  /* Nothing written yet, so there is no counter and a full answer is the only honest one. */
+  const again = call('listItems', { token: tokens.admin, rev: first.rev });
+  assert.ok(Array.isArray(again.items), 'no counter yet means a full read');
+
+  call('saveItem', { token: tokens.admin, item: { type: 'Project', title: 'Bump', f1: 'Amina' } });
+  const after = call('listItems', { token: tokens.admin });
+  assert.ok(after.rev, 'a write starts the counter');
+  assert.ok(after.items.some(i => i.title === 'Bump'));
+
+  const quick = call('listItems', { token: tokens.admin, rev: after.rev });
+  assert.equal(quick.unchanged, true, 'the same counter means nothing to read');
+  assert.equal(quick.rev, after.rev);
+
+  call('saveItem', { token: tokens.admin, id: after.items.find(i => i.title === 'Bump').id, item: { s: 'Done' } });
+  const changed = call('listItems', { token: tokens.admin, rev: after.rev });
+  assert.ok(Array.isArray(changed.items), 'a write since means a full read');
+  assert.notEqual(changed.rev, after.rev);
+});
+
+test('within one request each tab is read once, however many times it is asked for', () => {
+  const { call, tokens, spreadsheet } = workbook();
+  const meta = spreadsheet.getSheetByName('Tracker Item Meta');
+  const tasks = spreadsheet.getSheetByName(TASKS);
+  let reads = 0;
+  const count = sheet => { const real = sheet.getRange.bind(sheet); sheet.getRange = (...a) => { reads += 1; return real(...a); }; };
+  count(meta); count(tasks);
+
+  reads = 0;
+  call('saveItem', { token: tokens.admin, item: { type: 'Task', title: 'One read', f1: 'Amina', s: 'Ongoing', pri: 'Mid' } });
+  /* Listing items, giving out the id, writing the row and the note about it: a handful of
+     range calls, not dozens. Sampling a date column used to be one call per cell. */
+  assert.ok(reads < 25, 'a save touched the sheets ' + reads + ' times');
 });
 
 /* --------------------------------------------------------- a create is never an overwrite */

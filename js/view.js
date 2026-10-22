@@ -192,7 +192,7 @@ const View={
  boardResults(F,L){
   return `<p class="text-secondary small">${L.length} item${L.length===1?'':'s'}${F.st?` · Filter: <b>${F.st==='__over'?'Overdue':F.st}</b> <a href="#" data-a="kpi" data-v="">clear</a>`:''}</p><div class="bd">${ST.map(s=>{
    const a=L.filter(p=>F.st==='__over'?s==='Ongoing'&&over(p):p.s===s).sort((x,y)=>s==='Ongoing'?((x.e||'9')<(y.e||'9')?-1:1):((PO[x.pri]!=null?PO[x.pri]:3)-(PO[y.pri]!=null?PO[y.pri]:3)));
-   return `<div class="kcol" style="--c:${COL[s]}"><h4 class="d-flex justify-content-between align-items-center">${IC[s]} ${s}<span class="badge rounded-pill" style="background:${COL[s]}">${a.length}</span></h4><div class="cb">${a.map((p,i)=>{const g=pct(p);return `<div class="card it a-up" style="--i:${i}" data-a="open" data-v="${esc(p.id)}"><div class="card-body p-2 px-3"><span class="id">${esc(p.id)} · ${esc(LBL[p.type]||p.type)}</span><div class="t">${esc(p.title)}</div><div class="m d-flex justify-content-between flex-wrap gap-1 text-secondary"><span>${p.pri?`<i class="pr" style="background:${PC[p.pri]}"></i>${p.pri} · `:''}${esc(base(p.f1))}${p.f2?' + '+esc(p.f2):''}</span><span class="${over(p)?'od':''}">${p.e?(over(p)?'⚠ ':'')+fd(p.e):''}</span></div>${p.type==='Project'?`<div class="m d-flex justify-content-between text-secondary mt-2"><span>📅 ${fd(p.sd)} → ${fd(p.e)}</span><b>${g==null?'no milestones yet':g+'% complete'}</b></div>${bar(g,COL[s],4,s==='Ongoing')}`:(g!=null?bar(g,COL[s],4,s==='Ongoing'):'')}</div></div>`}).join('')||empty('Nothing here')}</div></div>`}).join('')}</div>`},
+   return `<div class="kcol" style="--c:${COL[s]}"><h4 class="d-flex justify-content-between align-items-center">${IC[s]} ${s}<span class="badge rounded-pill" style="background:${COL[s]}">${a.length}</span></h4><div class="cb">${a.map((p,i)=>{const g=pct(p);return `<div class="card it a-up" style="--i:${i}" data-a="open" data-v="${esc(p.id)}"><div class="card-body p-2 px-3"><span class="id">${esc(p.id)} · ${esc(LBL[p.type]||p.type)}</span><div class="t">${esc(p.title)}</div><div class="m d-flex justify-content-between flex-wrap gap-1 text-secondary"><span>${p.pri?`<i class="pr" style="background:${PC[p.pri]}"></i>${p.pri} · `:''}${esc(base(p.f1))}${p.f2?' + '+esc(p.f2):''}</span><span class="${over(p)?'od':''}">${p.type==='Drive'?(p.ud?'↻ '+fd(p.ud):''):(p.e?(over(p)?'⚠ ':'')+fd(p.e):'')}</span></div>${p.type==='Project'?`<div class="m d-flex justify-content-between text-secondary mt-2"><span>📅 ${fd(p.sd)} → ${fd(p.e)}</span><b>${g==null?'no milestones yet':g+'% complete'}</b></div>${bar(g,COL[s],4,s==='Ongoing')}`:(g!=null?bar(g,COL[s],4,s==='Ongoing'):'')}</div></div>`}).join('')||empty('Nothing here')}</div></div>`}).join('')}</div>`},
 
  tasks(TF){
   const who=[...new Set(Model.all().filter(t=>t.type==='Task').map(t=>t.f1).filter(Boolean))].sort();
@@ -345,7 +345,7 @@ const View={
  /* --- modals (return the element; Presenter wires the buttons) --- */
  detail(x,w){
   const ms=splitMs(x.ms);
-  const rows=[['Owner (Focal-1)',x.f1],['Focal-2',x.f2],['Priority',x.pri],['Start',fd(x.sd)],['End',fd(x.e)],['Stakeholder',x.sh],['Completion',x.type==='Project'&&pct(x)!=null?pct(x)+'%':''],['Remarks',x.rm]].filter(r=>r[1]&&r[1]!=='—');
+  const rows=[['Owner (Focal-1)',x.f1],['Focal-2',x.f2],['Priority',x.pri],['Start',fd(x.sd)],x.type==='Drive'?['Updated',fd(x.ud)]:['End',fd(x.e)],['Stakeholder',x.sh],['Completion',x.type==='Project'&&pct(x)!=null?pct(x)+'%':''],['Remarks',x.rm]].filter(r=>r[1]&&r[1]!=='—');
   return this.modalShell({c:COL[x.s],
    title:`<span class="id">${esc(x.id)} · ${esc(LBL[x.type]||x.type)}${x.arch?' · archive':''}</span><div class="text-secondary small">${esc(DEF[x.type]||'')}</div><h2 class="h5 fw-bold mt-1 mb-2">${esc(x.title)}</h2>${badge(x.s)} ${over(x)?'<span class="od small">⚠ Overdue</span>':''}`,
    body:`<dl class="row mb-0 small">${rows.map(r=>`<dt class="col-4 col-sm-3 text-secondary fw-normal">${r[0]}</dt><dd class="col-8 col-sm-9">${esc(r[1])}</dd>`).join('')}</dl>
@@ -359,7 +359,10 @@ const View={
    body:`<div class="row g-3">
    ${fld('Type',`<div class="seg btn-group w-100" id="ty">${AL.map(t=>`<button type="button" class="btn ${x.type===t?'on':''}" data-t="${t}">${LBL[t]||t}</button>`).join('')}</div><div class="form-text" id="td">${DEF[x.type]}</div>`,'col-12')}
    ${fld('Name / Title *',`<input class="form-control" id="f_t" value="${esc(x.title)}">`,'col-12')}
-   ${fld('Start date',`<input type="date" class="form-control" id="f_sd" value="${x.sd||''}">`)}${fld('End date',`<input type="date" class="form-control" id="f_e" value="${x.e||''}">`)}
+   ${fld('Start date',`<input type="date" class="form-control" id="f_sd" value="${x.sd||''}">`)}${x.type==='Drive'
+    /* a recurring item has no end: it has the date it was last brought up to date */
+    ?fld('Update date',`<input type="date" class="form-control" id="f_ud" value="${x.ud||today10()}">`)
+    :fld('End date',`<input type="date" class="form-control" id="f_e" value="${x.e||''}">`)}
    ${fld('Focal-1 (lead) *',`<input class="form-control" id="f_1" list="pl" value="${esc(x.f1)}">`)}${fld('Focal-2',`<input class="form-control" id="f_2" list="pl" value="${esc(x.f2)}">`)}
    <datalist id="pl">${Model.people().map(p=>`<option value="${esc(p)}">`).join('')}</datalist>
    ${fld('Priority',`<select class="form-select" id="f_p"><option>High</option><option>Mid</option><option>Low</option></select>`)}${fld('Stakeholder',`<input class="form-control" id="f_h" value="${esc(x.sh)}">`)}

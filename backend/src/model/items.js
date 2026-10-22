@@ -28,7 +28,7 @@ function toClient(row) {
     id: row.id, type: row.type, title: row.title, s: row.s, pri: row.pri,
     f1: row.f1, f2: row.f2, sd: row.sd, e: row.e, sh: row.sh, ms: row.ms, rm: row.rm,
     createdAt: row.createdAt, createdBy: row.createdBy,
-    updatedAt: row.updatedAt, updatedBy: row.updatedBy, role: row.role || '',
+    updatedAt: row.updatedAt, updatedBy: row.updatedBy, role: row.role || '', ud: row.ud || '',
   };
 }
 
@@ -109,7 +109,7 @@ function clean(input = {}, { partial = false } = {}) {
   for (const [key, max] of [['f2', 120], ['sh', 200], ['rm', 2000], ['ms', 8000]]) {
     if (!partial || has(key)) out[key] = str(input[key], max);
   }
-  for (const key of ['sd', 'e']) {
+  for (const key of ['sd', 'e', 'ud']) {
     if (!partial || has(key)) {
       const v = str(input[key], 10);
       if (!isDate(v)) throw badRequest(`${key === 'sd' ? 'Start' : 'End'} date must look like 2026-10-15`, 'bad_date');

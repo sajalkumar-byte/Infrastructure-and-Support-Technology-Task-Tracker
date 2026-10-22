@@ -6,9 +6,9 @@
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <title>Task and Project Tracker</title>
 <!-- Tab icon: the BRAC mark, instead of the browser's default globe -->
-<link rel="icon" href="assets/favicon.ico?v=31" sizes="48x48">
-<link rel="icon" type="image/png" href="assets/icon.png?v=31" sizes="any">
-<link rel="apple-touch-icon" href="assets/icon-180.png?v=31">
+<link rel="icon" href="assets/favicon.ico?v=32" sizes="48x48">
+<link rel="icon" type="image/png" href="assets/icon.png?v=32" sizes="any">
+<link rel="apple-touch-icon" href="assets/icon-180.png?v=32">
 <script>/* apply the saved theme before first paint: light | dark | ocean */
 (function(){var t='';try{t=localStorage.getItem('tracker.theme')||localStorage.getItem('mftech.theme')||''}catch(e){}if(!/^(light|dark|ocean)$/.test(t))t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';var h=document.documentElement;h.setAttribute('data-theme',t);h.setAttribute('data-bs-theme',t==='dark'?'dark':'light')})();
 /* if a script cannot even be parsed (very old browser), say so instead of leaving a blank page */
@@ -17,7 +17,7 @@ window.addEventListener('error',function(e){if(window.__appReady)return;var v=do
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
 <!-- Bootstrap 5.3.3 is served from the project's vendor folder so the page also works offline -->
 <link rel="stylesheet" href="vendor/bootstrap.min.css">
-<link rel="stylesheet" href="css/style.css?v=31">
+<link rel="stylesheet" href="css/style.css?v=32">
 </head>
 <body>
 <noscript><div style="padding:20px;font-family:system-ui,sans-serif">The tracker needs JavaScript. Please enable it in your browser settings.</div></noscript>
@@ -25,7 +25,7 @@ window.addEventListener('error',function(e){if(window.__appReady)return;var v=do
 <header class="hero d-flex flex-wrap align-items-center justify-content-between gap-3 px-4 py-3">
   <div class="hero-fx"></div>
   <div class="d-flex flex-wrap align-items-center gap-3">
-    <div class="logo"><img src="assets/logo.png?v=31" alt="BRAC"></div>
+    <div class="logo"><img src="assets/logo.png?v=32" alt="BRAC"></div>
     <div>
       <h1 class="mb-1">Infrastructure &amp; Support | Technology | Microfinance <br><span>Task and Project Tracker</span></h1>
       <div class="live" id="lv"><i></i><span id="snap">Connecting…</span></div>
@@ -83,18 +83,18 @@ window.addEventListener('error',function(e){if(window.__appReady)return;var v=do
 <div class="toast-container position-fixed bottom-0 start-50 translate-middle-x p-3" id="toasts"></div>
 
 <script src="vendor/bootstrap.bundle.min.js"></script>
-<script src="config/users.js?v=31"></script>
-<script src="js/model.js?v=31"></script>
-<script src="js/view.js?v=31"></script>
-<script src="js/export.js?v=31"></script>
+<script src="config/users.js?v=32"></script>
+<script src="js/model.js?v=32"></script>
+<script src="js/view.js?v=32"></script>
+<script src="js/export.js?v=32"></script>
 <!-- The Google Sheet behind this Apps Script deployment. The page checks it on start-up and
      uses it as soon as it answers; until then everything stays in this browser. -->
 <script>window.GAS_URL='https://script.google.com/macros/s/AKfycbz10JY_8QrdLpGGE4NPHpUaDAUZu2Xw9wL8fRV0-xvXMnZo1tesB8qMleEKKgOGJ_LsDg/exec';</script>
-<script src="js/gsheet.js?v=31"></script>
+<script src="js/gsheet.js?v=32"></script>
 <!-- Node.js server in server/ – used automatically when it answers at /api/health -->
-<script src="js/api.js?v=31"></script>
+<script src="js/api.js?v=32"></script>
 <!-- Chat, when the Node.js backend is running: Socket.IO is fetched from that server -->
-<script src="js/chat.js?v=31"></script>
-<script src="js/presenter.js?v=31"></script>
+<script src="js/chat.js?v=32"></script>
+<script src="js/presenter.js?v=32"></script>
 </body>
 </html>

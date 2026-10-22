@@ -6,7 +6,7 @@
 
 const TABLES = {
   users:    { key: 'email',     columns: ['email', 'name', 'role', 'password', 'externalId', 'createdAt', 'createdBy', 'updatedAt', 'lastLogin'] },
-  items:    { key: 'id',        columns: ['id', 'type', 'title', 's', 'pri', 'f1', 'f2', 'sd', 'e', 'sh', 'ms', 'rm', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'role'] },
+  items:    { key: 'id',        columns: ['id', 'type', 'title', 's', 'pri', 'f1', 'f2', 'sd', 'e', 'sh', 'ms', 'rm', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'role', 'ud'] },
   sessions: { key: 'tokenHash', columns: ['tokenHash', 'email', 'csrf', 'createdAt', 'expiresAt', 'userAgent', 'ip'] },
   requests: { key: 'id',        columns: ['id', 'email', 'name', 'at'] },
   archive:  { key: 'id',        columns: ['id', 'rows', 'at'] },

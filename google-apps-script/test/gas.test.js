@@ -863,7 +863,7 @@ test('the team rows already in the workbook are read, not rewritten', () => {
   assert.equal(items[0].title, 'MDM');
   assert.equal(items[0].sd, '2024-06-12', 'their date format is understood');
   assert.equal(items[0].pri, 'High', 'Impact is the priority');
-  assert.equal(items[2].type, 'Drive');
+  assert.equal(items[2].type, 'Task', 'a row the team marked Drive is listed with the tasks');
 
   assert.equal(JSON.stringify(spreadsheet.getSheetByName('IS Project & Drive').rows), before,
     'reading changed nothing at all');
@@ -874,7 +874,7 @@ test('a new item is written into the team tab, in the team columns', () => {
   const made = call('saveItem', {
     token: tokens.admin,
     item: {
-      type: 'Drive', title: 'Replace UPS battery', f1: 'Sohel', f2: 'Azmir', s: 'Ongoing',
+      type: 'Project', title: 'Replace UPS battery', f1: 'Sohel', f2: 'Azmir', s: 'Ongoing',
       pri: 'High', sd: '2026-10-01', e: '2026-10-21', sh: 'Facilities', ms: 'Quote - Done', rm: 'urgent',
     },
   });
@@ -882,7 +882,7 @@ test('a new item is written into the team tab, in the team columns', () => {
   const sheet = spreadsheet.getSheetByName('IS Project & Drive');
   const line = sheet.rows.find(r => r[0] === made.id);
   assert.ok(line, 'the row is in the team tab');
-  assert.equal(line[1], 'Drive', 'a drive is a Drive in their Type column');
+  assert.equal(line[1], 'Project', 'a project is a Project in their Type column');
   assert.equal(line[2], 'High');                       // Impact
   assert.equal(line[4], 'Replace UPS battery');        // Title
   assert.equal(line[5], 'Quote - Done');               // Activity/Milestone

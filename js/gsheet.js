@@ -252,17 +252,37 @@
       });
     }
 
+    /* Put the item the server answered with into the local list straight away, so the page
+       shows the result the moment the save returns; the full re-read follows in the background
+       rather than keeping the person waiting for a second round trip. */
+    absorb(saved) {
+      if (!saved || !saved.id) return;
+      itemIn(saved);
+      var list = this.cache.items || [];
+      var at = -1;
+      for (var i = 0; i < list.length; i++) if (list[i].id === saved.id) { at = i; break; }
+      if (at === -1) list.push(saved); else list[at] = saved;
+      this.cache.items = list;
+      this.emit('items');
+      this.rev = '';                       // the next poll must read properly
+      var self = this;
+      setTimeout(function () { self.refresh('items'); }, 0);
+    }
+
     async set(collection, id, object, options) {
       if (collection === 'items') {
+        var saved;
         if (options && options.fresh) {
           /* The page guessed an id from what it had loaded, but somebody else may have taken it
              since. Sending it would make the server update that row. New items go without one,
              and the sheet hands back the id it actually gave. */
           var fresh = Object.assign({}, object); delete fresh.id;
-          await this.call('saveItem', { item: fresh });
+          saved = await this.call('saveItem', { item: fresh });
         } else {
-          await this.call('saveItem', { id: id, item: object });
+          saved = await this.call('saveItem', { id: id, item: object });
         }
+        this.absorb(saved);
+        return;
       } else if (collection === 'users') {
         await this.saveUser(id, object);
       } else if (collection === 'requests') {
@@ -275,7 +295,8 @@
 
     async update(collection, id, patch) {
       if (collection === 'items') {
-        await this.call('saveItem', { id: id, item: patch });
+        this.absorb(await this.call('saveItem', { id: id, item: patch }));
+        return;
       } else if (collection === 'users') {
         var body = { email: this.emailFor(id) };
         if (patch.name !== undefined) body.name = patch.name;
@@ -326,7 +347,11 @@
     async refresh(collection) {
       try {
         if (collection === 'items') {
-          var data = await this.call('listItems');
+          /* The sheet keeps a counter that every write bumps. Sending the last one seen lets the
+             script answer "nothing changed" in a moment instead of reading three tabs. */
+          var data = await this.call('listItems', { rev: this.rev || '' });
+          if (data && data.unchanged) return;
+          this.rev = (data && data.rev) || '';
           this.cache.items = (((data && data.items) || [])).map(itemIn);
           this.emit('items');
         } else if (collection === 'taskhist') {
@@ -354,10 +379,12 @@
       }
     }
 
+    /* Apps Script answers each request in a few seconds whatever it is asked, so three in a row
+       cost three times as long as three at once. They go out together. */
     async refreshAll() {
-      await this.refresh('items');
-      await this.refresh('taskhist');
-      if (this.role === 'superadmin') await this.refresh('users');
+      var loads = [this.refresh('items'), this.refresh('taskhist')];
+      if (this.role === 'superadmin') loads.push(this.refresh('users'));
+      await Promise.all(loads);
     }
 
     startPolling() {

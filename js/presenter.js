@@ -59,13 +59,15 @@ const Presenter={
   m.querySelector('#sb').onclick=async()=>{const v=i=>m.querySelector(i).value.trim();
    if(!v('#f_t')||!v('#f_1')){View.toast('Title and Focal-1 are required');return}
    const id=edit?x.id:Model.nextId(ty);
-   const o={id,type:ty,pri:v('#f_p'),title:v('#f_t'),ms:v('#f_m'),f1:v('#f_1'),f2:v('#f_2'),s:edit?x.s:'Ongoing',sd:v('#f_sd'),e:v('#f_e'),sh:v('#f_h'),rm:x.rm||''};
+   /* a recurring item carries an update date instead of an end date; the form shows one or the other */
+   const maybe=i=>{const el=m.querySelector(i);return el?el.value.trim():''};
+   const o={id,type:ty,pri:v('#f_p'),title:v('#f_t'),ms:v('#f_m'),f1:v('#f_1'),f2:v('#f_2'),s:edit?x.s:'Ongoing',sd:v('#f_sd'),e:ty==='Drive'?'':maybe('#f_e'),ud:ty==='Drive'?maybe('#f_ud'):'',sh:v('#f_h'),rm:x.rm||''};
    const btn=m.querySelector('#sb');btn.disabled=true;
    try{await Model.save(o,!edit);m.close();View.toast(edit?'Saved ✓':'Created ✓ – now in Ongoing')}catch(er){btn.disabled=false;View.toast('Could not save: '+(er.code||er.message))}}},
 
  /* --- export (PDF / Excel / Print) of what the current page shows --- */
  XCOLS:['ID','Type','Title','Status','Priority','Focal-1','Focal-2','Start','End','Stakeholder','Completion','Milestones / progress','Remarks'],
- xrow(p){return[p.id,LBL[p.type]||p.type,p.title,p.s,p.pri||'',p.f1||'',p.f2||'',fd(p.sd),fd(p.e),p.sh||'',p.type==='Project'&&Model.pct(p)!=null?Model.pct(p)+'%':'',splitMs(p.ms).join('; '),p.rm||'']},
+ xrow(p){return[p.id,LBL[p.type]||p.type,p.title,p.s,p.pri||'',p.f1||'',p.f2||'',fd(p.sd),p.type==='Drive'?(p.ud?'updated '+fd(p.ud):'—'):fd(p.e),p.sh||'',p.type==='Project'&&Model.pct(p)!=null?Model.pct(p)+'%':'',splitMs(p.ms).join('; '),p.rm||'']},
  xsec(title,list,color){return{title,columns:this.XCOLS,rows:list.map(p=>this.xrow(p)),color}},
  xhex(h){return[1,3,5].map(i=>parseInt(h.slice(i,i+2),16))},
  xstatus(list){const by=ST.filter(s=>list.some(p=>p.s===s));return by.map(s=>this.xsec(s,list.filter(p=>p.s===s),this.xhex(COL[s])))},
