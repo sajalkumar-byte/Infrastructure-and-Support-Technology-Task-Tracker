@@ -596,7 +596,7 @@ test('a date typed into the team tab by hand is read as that day', () => {
   const { call, tokens, spreadsheet } = freshWorld();
   const made = call('saveItem', {
     token: tokens.superadmin,
-    item: { type: 'Task', title: 'Swap the UPS battery', f1: 'Riad', s: 'Ongoing', pri: 'Mid' },
+    item: { type: 'Project', title: 'Swap the UPS battery', f1: 'Riad', s: 'Ongoing', pri: 'Mid' },
   });
 
   const sheet = spreadsheet.getSheetByName('IS Project & Drive');
@@ -874,7 +874,7 @@ test('a new item is written into the team tab, in the team columns', () => {
   const made = call('saveItem', {
     token: tokens.admin,
     item: {
-      type: 'Task', title: 'Replace UPS battery', f1: 'Sohel', f2: 'Azmir', s: 'Ongoing',
+      type: 'Drive', title: 'Replace UPS battery', f1: 'Sohel', f2: 'Azmir', s: 'Ongoing',
       pri: 'High', sd: '2026-10-01', e: '2026-10-21', sh: 'Facilities', ms: 'Quote - Done', rm: 'urgent',
     },
   });
@@ -882,7 +882,7 @@ test('a new item is written into the team tab, in the team columns', () => {
   const sheet = spreadsheet.getSheetByName('IS Project & Drive');
   const line = sheet.rows.find(r => r[0] === made.id);
   assert.ok(line, 'the row is in the team tab');
-  assert.equal(line[1], 'Drive', 'the Type column has no Task, so a task is filed as a drive');
+  assert.equal(line[1], 'Drive', 'a drive is a Drive in their Type column');
   assert.equal(line[2], 'High');                       // Impact
   assert.equal(line[4], 'Replace UPS battery');        // Title
   assert.equal(line[5], 'Quote - Done');               // Activity/Milestone
@@ -942,7 +942,7 @@ test('a row the app did not create cannot be deleted through the app', () => {
 
   /* One the app created is its own to remove. */
   const mine = call('saveItem', {
-    token: tokens.admin, item: { type: 'Task', title: 'Temporary', f1: 'Amina' },
+    token: tokens.admin, item: { type: 'Drive', title: 'Temporary', f1: 'Amina' },
   });
   assert.equal(sheet.rows.length, before + 1);
   assert.equal(call('deleteItem', { token: tokens.superadmin, id: mine.id }).ok, true);
@@ -966,29 +966,27 @@ test('the app keeps its own bookkeeping out of the team tab', () => {
   assert.equal(row[7], 'yes', 'marked as one of ours');
 });
 
-test('a task is filed under the Drive option, because that is all the dropdown allows', () => {
-  /* The real tab restricts Type to Drive or Project. Google rejects anything else outright -
-     the whole write fails - so a task goes in as a drive, and the page keeps calling it a
-     task because the script remembers that itself. */
+test('a task never meets the projects tab dropdown, because it has a tab of its own', () => {
+  /* The real projects tab restricts Type to Drive or Project. A task used to be forced in as
+     a drive; now it goes to the tasks tab and the dropdown is never asked. */
   const { call, tokens, spreadsheet } = freshWorld();
-  const sheet = spreadsheet.getSheetByName('IS Project & Drive');
-  sheet.getRange(2, 2).setDataValidationList(['Drive', 'Project']);
+  const projects = spreadsheet.getSheetByName('IS Project & Drive');
+  projects.getRange(2, 2).setDataValidationList(['Drive', 'Project']);
 
   const made = call('saveItem', {
     token: tokens.admin,
     item: { type: 'Task', title: 'Replace UPS battery', f1: 'Sohel', s: 'Ongoing', pri: 'Mid' },
   });
   assert.ok(!made.error, JSON.stringify(made.error || {}));
-  assert.equal(made.id, 'T-1', 'the id still says what it is');
-  assert.equal(made.type, 'Task', 'and so does the page');
+  assert.equal(made.type, 'Task');
+  assert.equal(projects.getLastRow(), 1, 'the projects tab did not grow');
+  assert.ok(spreadsheet.getSheetByName('Individual Task List').rows.some(r => r[1] === made.id),
+    'the task is in the tasks tab');
 
-  const line = sheet.rows.find(r => r[0] === 'T-1');
-  assert.equal(line[1], 'Drive', 'while the cell holds a value the dropdown accepts');
-
-  const back = call('listItems', { token: tokens.admin }).items.find(i => i.id === 'T-1');
-  assert.equal(back.type, 'Task', 'it comes back as a task, not as a drive');
+  /* And a drive still has to fit the dropdown, which it does. */
+  const drive = call('saveItem', { token: tokens.admin, item: { type: 'Drive', title: 'Patching', f1: 'Sohel' } });
+  assert.equal(projects.rows.find(r => r[0] === drive.id)[1], 'Drive');
 });
-
 test('the words the dropdowns use are the words that get written', () => {
   /* A workbook that says Medium rather than Mid, or On-Going rather than Ongoing, is written
      in its own words instead of having the write refused. */

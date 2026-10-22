@@ -258,7 +258,7 @@ function setupTracker() {
      It writes nothing into it, and it does not build the role views: those add tabs to a
      workbook people keep by hand, so they are opt-in - run rebuildViews when you want them. */
   var items = readItems_();
-  Logger.log('Items tab: "%s" - %s row(s) read, none changed.', itemSheetName_(), items.length);
+  Logger.log('Read %s row(s) from "%s" and "%s"; none changed.', items.length, itemSheetName_(), taskSheetName_());
   Logger.log('Run rebuildViews() if you want a tab per role. Nothing else here touches your tabs.');
 
   Logger.log('Spreadsheet: %s', ss.getUrl());
@@ -375,7 +375,14 @@ function checkDeployment() {
       problems.push('The columns of "' + itemSheetName_() + '" are not where this expects them: '
         + 'column A should be the ID and column E the Title.');
     }
-    Logger.log('items tab: "%s" with %s row(s)', itemSheetName_(), Math.max(sh.getLastRow() - 1, 0));
+    Logger.log('projects tab: "%s" with %s row(s)', itemSheetName_(), Math.max(sh.getLastRow() - 1, 0));
+    var tasks = taskSheet_();
+    var taskHeaders = tasks.getRange(1, 1, 1, TASK_WIDTH).getValues()[0];
+    if (String(taskHeaders[TASK_COL.title - 1]).toLowerCase().indexOf('title') === -1) {
+      problems.push('The columns of "' + taskSheetName_() + '" are not where this expects them: '
+        + 'column F should be the Task Title.');
+    }
+    Logger.log('tasks tab:    "%s" with %s row(s)', taskSheetName_(), Math.max(tasks.getLastRow() - 1, 0));
   } catch (err) { problems.push(err.message); }
 
   var users = readTable_('users');
@@ -676,17 +683,25 @@ var ACTIONS = {
   saveItem: function (body, ctx) {
     return withLock_(function () {
       var input = body.item || {};
-      var id = String(body.id || input.id || '');
+      /* Only the envelope names a row to edit. A new item arrives without one and is given
+         its id here, from what is actually in the sheet - the page's guess, made from whatever
+         it had loaded, could match a row somebody else added since, and a create would then
+         quietly overwrite it. */
+      var id = String(body.id || '');
       var rows = readTable_('items');
       var index = -1;
       for (var i = 0; i < rows.length; i++) if (String(rows[i].id) === id) { index = i; break; }
+
+      if (id && index === -1) {
+        throw fail_(404, 'not_found', 'That item is no longer in the spreadsheet - reload and try again');
+      }
 
       if (index === -1) {
         /* Creating: the role must be allowed to write this type. */
         var type = String(input.type || '');
         assertWrite_(ctx.user.role, type);
         var created = cleanItem_(input, false);
-        created.id = /^[PDT]-\d+$/.test(id) ? id : nextId_(created.type, rows);
+        created.id = nextId_(created.type, rows);
         created.createdAt = nowIso_();
         created.createdBy = ctx.user.email;
         /* The role it was created with, so the spreadsheet can show each role its own work.
@@ -1591,57 +1606,80 @@ function spreadsheet_() {
 /* ======================= the workbook this tracker lives in =======================
 
    This script is a guest in a workbook people already keep by hand: eighteen tabs, hundreds
-   of rows, formulas, merged headings. Two rules follow from that, and the code below exists
-   to keep them.
+   of rows, formulas, merged headings, dropdowns. Two rules follow from that, and the code
+   below exists to keep them.
 
      1. Nothing that was already here is ever deleted, cleared or reformatted. Not a row, not
         a column, not a header. The script writes only where it is told to, and only rows it
         created itself can be removed by it.
 
-     2. The items the page shows live in the tab people already use for them - the one with
-        "Drive" in its name - written in that tab's own fifteen columns, in its own date
-        format. Projects, recurring drives AND tasks all land there, told apart by the Type
-        column, which is what that column is for.
+     2. Each kind of item lives where the team already keeps that kind, in that tab's own
+        columns and its own words:
+
+          Projects and drives  ->  "IS Project & Drive"    (Type says which)
+          Tasks                ->  "Individual Task List"
+
+        Both tabs are read in full, so everything the team has typed shows in the page, and a
+        new item goes to the tab its kind belongs in.
 
    Everything the backend needs for itself - accounts, sessions, chat, the audit trail, and
    the bookkeeping that says which rows it owns - goes in its own hidden tabs, named so they
    are obviously the software's and never mistaken for the real work. */
 
 var ITEM_SHEET_DEFAULT = 'IS Project & Drive';
+var TASK_SHEET_DEFAULT = 'Individual Task List';
 
-/** The tab holding the items. Override with the ITEM_SHEET script property. */
-function itemSheetName_() {
-  try {
-    var set = PropertiesService.getScriptProperties().getProperty('ITEM_SHEET');
-    if (set) return set;
-  } catch (err) {}
-  return ITEM_SHEET_DEFAULT;
+function scriptProperty_(name) {
+  try { return PropertiesService.getScriptProperties().getProperty(name) || ''; } catch (err) { return ''; }
 }
 
-/* Their fifteen columns, in their order. The script fills the ones it manages and leaves the
-   rest exactly as it found them - Budget and FY above all, which belong to whoever has been
-   keeping this by hand. */
+/** The tab holding projects and drives. Override with the ITEM_SHEET script property. */
+function itemSheetName_() { return scriptProperty_('ITEM_SHEET') || ITEM_SHEET_DEFAULT; }
+
+/** The tab holding tasks. Override with the TASK_SHEET script property. */
+function taskSheetName_() { return scriptProperty_('TASK_SHEET') || TASK_SHEET_DEFAULT; }
+
+/**
+ * How a row the team marked "Drive" shows in the page: as a drive (the page calls them
+ * Recurring), or under Tasks. The default keeps the team's own word. Set the script property
+ * DRIVE_ROWS_SHOW_AS to Task to list them with the tasks instead; they are still written back
+ * to their own tab as drives either way.
+ */
+function driveRowsShowAs_() {
+  return /^task$/i.test(scriptProperty_('DRIVE_ROWS_SHOW_AS')) ? 'Task' : 'Drive';
+}
+
+/* The fifteen columns of each tab, in the team's order. The script fills the ones it manages
+   and leaves the rest exactly as it found them. */
 var ITEM_COL = {
   id: 1, type: 2, impact: 3, fy: 4, title: 5, activity: 6, f1: 7, f2: 8,
   start: 9, end: 10, duration: 11, status: 12, stakeholder: 13, budget: 14, remarks: 15
 };
 var ITEM_WIDTH = 15;
 
-function itemSheet_() {
-  var name = itemSheetName_();
+var TASK_COL = {
+  sn: 1, ref: 2, assigned: 3, priority: 4, fy: 5, title: 6, milestones: 7,
+  start: 8, end: 9, duration: 10, status: 11, requester: 12, vendor: 13, f2: 14, remarks: 15
+};
+var TASK_WIDTH = 15;
+
+function namedSheet_(name, holds, property) {
   var sh = spreadsheet_().getSheetByName(name);
   if (!sh) {
-    throw new Error('The tab "' + name + '" is not in this spreadsheet. Check the name, or set '
-      + 'the ITEM_SHEET script property to the tab the items should go in.');
+    throw new Error('The tab "' + name + '" (' + holds + ') is not in this spreadsheet. Check the '
+      + 'name, or set the ' + property + ' script property to the tab they should go in.');
   }
   return sh;
 }
+function itemSheet_() { return namedSheet_(itemSheetName_(), 'projects and drives', 'ITEM_SHEET'); }
+function taskSheet_() { return namedSheet_(taskSheetName_(), 'tasks', 'TASK_SHEET'); }
 
 /* ---------- reading their values without assuming how they were typed ---------- */
 
 /** A cell holding a day, whatever shape it is in, as yyyy-MM-dd. Empty when it is not a date. */
 function toIsoDay_(value) {
   if (value instanceof Date) {
+    if (isNaN(value.getTime())) return '';
     try { return Utilities.formatDate(value, timeZone_(), 'yyyy-MM-dd'); } catch (err) { return ''; }
   }
   var text = String(value === null || value === undefined ? '' : value).trim();
@@ -1671,35 +1709,6 @@ function toIsoDay_(value) {
   return '';
 }
 
-/**
- * How the dates in their tab are stored, so a new row is written the same way.
- *
- * A column people have typed into can hold real dates or plain text that reads like one. Write
- * a Date into a column of text and it shows up in a different format from every row above it;
- * write text into a column of dates and their sorting and formulas stop seeing a date. So the
- * column is sampled once, and whatever is already there is what gets written.
- */
-function itemDateStyle_() {
-  var sh = itemSheet_();
-  var last = Math.min(sh.getLastRow(), 60);
-  for (var row = 2; row <= last; row++) {
-    var value = sh.getRange(row, ITEM_COL.start).getValue();
-    if (value instanceof Date) return 'date';
-    if (String(value || '').trim()) return 'text';
-  }
-  return 'date';
-}
-
-/** A day written the way the column already writes them. */
-function dayForSheet_(iso) {
-  if (!iso) return '';
-  var when = fromIsoDay_(iso);
-  if (!when) return '';
-  if (itemDateStyle_() === 'date') return when;
-  try { return Utilities.formatDate(when, timeZone_(), 'd-MMM-yyyy'); }
-  catch (err) { return iso; }
-}
-
 /** A day back out as a real date, anchored at midday so no timezone can shift it. */
 function fromIsoDay_(iso) {
   var text = String(iso || '').trim();
@@ -1713,6 +1722,34 @@ function daysBetween_(startIso, endIso) {
   var a = fromIsoDay_(startIso), b = fromIsoDay_(endIso);
   if (!a || !b) return '';
   return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+
+/**
+ * How the dates in a column are stored, so a new row is written the same way.
+ *
+ * A column people have typed into can hold real dates or plain text that reads like one. Write
+ * a Date into a column of text and it shows up in a different format from every row above it;
+ * write text into a column of dates and their sorting and formulas stop seeing a date. So the
+ * column is sampled, and whatever is already there is what gets written.
+ */
+function dateStyle_(sh, column) {
+  var last = Math.min(sh.getLastRow(), 60);
+  for (var row = 2; row <= last; row++) {
+    var value = sh.getRange(row, column).getValue();
+    if (value instanceof Date) return 'date';
+    if (String(value || '').trim()) return 'text';
+  }
+  return 'date';
+}
+
+/** A day written the way the column already writes them. */
+function dayForColumn_(sh, column, iso) {
+  if (!iso) return '';
+  var when = fromIsoDay_(iso);
+  if (!when) return '';
+  if (dateStyle_(sh, column) === 'date') return when;
+  try { return Utilities.formatDate(when, timeZone_(), 'd-MMM-yyyy'); }
+  catch (err) { return iso; }
 }
 
 /* The vocabularies differ a little between the page and a tab people type into by hand, so
@@ -1735,21 +1772,23 @@ function readStatus_(value) {
   return 'Listed';
 }
 
+function readPriority_(value) {
+  var p = String(value || '').trim().toLowerCase();
+  if (p.indexOf('high') === 0 || p === '1') return 'High';
+  if (p.indexOf('low') === 0 || p === '3') return 'Low';
+  return 'Mid';
+}
+
 /* ---------- fitting what the page says into what the dropdowns allow ----------
 
-   The Type column of this tab is a dropdown with two choices, Drive and Project. There is no
-   Task, and Google refuses any other value outright - the whole write fails on the validation
-   rule. So a task is filed under Drive, which is what it is closest to and what was asked
-   for, and the script remembers in its own tab that the page calls it a Task. Nothing is lost:
-   the page still shows three kinds, the sheet still holds only the two it knows.
+   The Type column of the projects tab is a dropdown with two choices, Drive and Project.
+   Google does not quietly ignore a third value - it refuses the whole write. So the script
+   asks each column what its dropdown allows and writes in those words; where nothing fits,
+   the cell is left as it was rather than filled with something untrue. */
 
-   The same reading is applied to Impact and Status, so a workbook whose dropdown says
-   "Medium" rather than "Mid", or "On-Going" rather than "Ongoing", is written in its own
-   words instead of being refused. */
-
-function allowedValues_(column) {
+function allowedValues_(sh, column) {
   try {
-    var rule = itemSheet_().getRange(2, column).getDataValidation();
+    var rule = sh.getRange(2, column).getDataValidation();
     if (!rule) return null;
     if (String(rule.getCriteriaType()) !== 'VALUE_IN_LIST') return null;
     var values = rule.getCriteriaValues()[0];
@@ -1758,11 +1797,7 @@ function allowedValues_(column) {
   } catch (err) { return null; }
 }
 
-/**
- * The spelling this column will accept for a value, trying each preference in turn.
- * Returns null when none of them fit, and the caller then leaves the cell alone rather than
- * writing something the sheet would reject or, worse, something untrue.
- */
+/** The spelling a column will accept for a value, trying each preference in turn; null when none fit. */
 function fitToList_(preferences, allowed) {
   if (!allowed) return preferences[0];
   for (var i = 0; i < preferences.length; i++) {
@@ -1775,22 +1810,20 @@ function fitToList_(preferences, allowed) {
 }
 
 function sheetType_(type) {
-  /* A task has no column of its own here, so it goes in as a drive - the instruction, and the
-     only choice the dropdown offers it. */
-  var order = type === 'Project' ? ['Project', 'Drive']
-    : type === 'Task' ? ['Drive', 'Project']
-    : ['Drive', 'Project'];
-  return fitToList_(order, allowedValues_(ITEM_COL.type));
+  /* A task has no entry in this dropdown, so one that ends up in this tab is filed as a drive -
+     the nearest thing it offers. Its own tab is where tasks normally go. */
+  var order = type === 'Project' ? ['Project', 'Drive'] : ['Drive', 'Project'];
+  return fitToList_(order, allowedValues_(itemSheet_(), ITEM_COL.type));
 }
 
-function sheetPriority_(pri) {
-  var order = pri === 'High' ? ['High', 'Medium', 'Mid']
-    : pri === 'Low' ? ['Low', 'Medium', 'Mid']
-    : ['Mid', 'Medium', 'Moderate', 'Normal'];
-  return fitToList_(order, allowedValues_(ITEM_COL.impact));
+function sheetPriority_(sh, column, pri) {
+  var order = pri === 'High' ? ['High', 'Medium', 'Mid', '1']
+    : pri === 'Low' ? ['Low', 'Medium', 'Mid', '3']
+    : ['Mid', 'Medium', 'Moderate', 'Normal', '2'];
+  return fitToList_(order, allowedValues_(sh, column));
 }
 
-function sheetStatus_(status) {
+function sheetStatus_(sh, column, status) {
   var orders = {
     'Ongoing': ['Ongoing', 'On-Going', 'On Going', 'Running', 'In Progress'],
     'Done': ['Done', 'Completed', 'Complete'],
@@ -1798,23 +1831,16 @@ function sheetStatus_(status) {
     'Listed': ['Listed', 'Planned', 'Pending', 'To Do'],
     'Closed': ['Closed', 'Cancelled', 'Canceled']
   };
-  return fitToList_(orders[status] || [status], allowedValues_(ITEM_COL.status));
-}
-
-function readPriority_(value) {
-  var p = String(value || '').trim().toLowerCase();
-  if (p.indexOf('high') === 0 || p === '1') return 'High';
-  if (p.indexOf('low') === 0 || p === '3') return 'Low';
-  return 'Mid';
+  return fitToList_(orders[status] || [status], allowedValues_(sh, column));
 }
 
 /* ---------- the bookkeeping the script keeps about itself ----------
 
-   Who created a row, when, with which role, and whether this script put it there at all.
-   None of it belongs in their fifteen columns, so it lives in a hidden tab of its own and
-   their sheet gains not a single column. */
+   Who created a row, when, with which role, what the page calls it, and whether this script
+   put it there at all. None of it belongs in the team's columns, so it lives in a hidden tab
+   of its own and their sheets gain not a single column. */
 
-/** id -> {role, createdAt, createdBy, updatedAt, updatedBy, owned} */
+/** id -> {type, role, createdAt, createdBy, updatedAt, updatedBy, owned} */
 function itemMeta_() {
   var map = {};
   readTable_('itemmeta').forEach(function (row) {
@@ -1838,6 +1864,20 @@ function saveItemMeta_(id, patch) {
   return fresh;
 }
 
+/**
+ * Bookkeeping must never undo a save. The row is already in the team's tab by the time this
+ * runs; if the note about it cannot be written, the save still happened, and telling the
+ * person it failed would be untrue. So it is tried twice and then logged, not thrown.
+ */
+function recordMeta_(id, patch) {
+  var last = null;
+  for (var attempt = 0; attempt < 2; attempt++) {
+    try { saveItemMeta_(id, patch); return true; } catch (err) { last = err; }
+  }
+  Logger.log('The bookkeeping for %s could not be written: %s', id, last && last.message);
+  return false;
+}
+
 function dropItemMeta_(id) {
   var rows = readTable_('itemmeta');
   for (var i = 0; i < rows.length; i++) {
@@ -1846,14 +1886,19 @@ function dropItemMeta_(id) {
   return false;
 }
 
-/* ---------- items, read from their tab ---------- */
+/* ---------- items, read from both tabs ---------- */
 
 function readItems_() {
+  var meta = itemMeta_();
+  return readProjectRows_(meta).concat(readTaskRows_(meta));
+}
+
+function readProjectRows_(meta) {
   var sh = itemSheet_();
   var last = sh.getLastRow();
   if (last < 2) return [];
   var values = sh.getRange(2, 1, last - 1, ITEM_WIDTH).getValues();
-  var meta = itemMeta_();
+  var showDrivesAs = driveRowsShowAs_();
   var out = [];
 
   values.forEach(function (line, index) {
@@ -1863,13 +1908,13 @@ function readItems_() {
     if (!id && !title) return;
 
     var mine = meta[id] || {};
-    /* What the page calls it: its own record first, then the id it was given, and only then
-       the cell - which can never say "Task". */
-    var kind = mine.type || (id.indexOf('T-') === 0 ? 'Task' : '') || readType_(line[ITEM_COL.type - 1]);
+    var kind = readType_(line[ITEM_COL.type - 1]);
+    /* The page's own record of what it is wins over the two words the cell can hold. */
+    if (mine.type === 'Task' || (!mine.type && id.indexOf('T-') === 0)) kind = 'Task';
+    else if (kind === 'Drive' && showDrivesAs === 'Task') kind = 'Task';
+
     out.push({
-      id: id,
-      type: kind,
-      title: title,
+      id: id, type: kind, title: title,
       s: readStatus_(line[ITEM_COL.status - 1]),
       pri: readPriority_(line[ITEM_COL.impact - 1]),
       f1: String(line[ITEM_COL.f1 - 1] || '').trim(),
@@ -1879,12 +1924,10 @@ function readItems_() {
       sh: String(line[ITEM_COL.stakeholder - 1] || '').trim(),
       ms: String(line[ITEM_COL.activity - 1] || '').trim(),
       rm: String(line[ITEM_COL.remarks - 1] || '').trim(),
-      createdAt: mine.createdAt || '',
-      createdBy: mine.createdBy || '',
-      updatedAt: mine.updatedAt || '',
-      updatedBy: mine.updatedBy || '',
+      createdAt: mine.createdAt || '', createdBy: mine.createdBy || '',
+      updatedAt: mine.updatedAt || '', updatedBy: mine.updatedBy || '',
       role: mine.role || '',
-      __row: index + 2,
+      __sheet: 'items', __row: index + 2,
       /* Rows that were here before this script are shown and can be edited, never deleted. */
       __owned: String(mine.owned || '') === 'yes'
     });
@@ -1893,30 +1936,73 @@ function readItems_() {
 }
 
 /**
- * Write an item into their fifteen columns, leaving every column the script does not manage
- * exactly as it was.
+ * The tasks tab has no id column of its own: a serial number, and a "Ref. ID" that is mostly
+ * blank. So a task's id is T- plus its serial number, which is what the page shows and what
+ * is written into Ref. ID for the rows this script creates. A line whose serial is missing or
+ * repeated gets an id from its row instead, so nothing is left out and nothing collides.
  */
-function writeItemRow_(rowNumber, item) {
+function readTaskRows_(meta) {
+  var sh = taskSheet_();
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var values = sh.getRange(2, 1, last - 1, TASK_WIDTH).getValues();
+  var seen = {};
+  var out = [];
+
+  values.forEach(function (line, index) {
+    var sn = String(line[TASK_COL.sn - 1] === null || line[TASK_COL.sn - 1] === undefined ? '' : line[TASK_COL.sn - 1]).trim();
+    var ref = String(line[TASK_COL.ref - 1] || '').trim();
+    var title = String(line[TASK_COL.title - 1] || '').trim();
+    if (!sn && !ref && !title) return;
+
+    var row = index + 2;
+    var id = /^T-\d+$/.test(ref) ? ref : (/^\d+$/.test(sn) && Number(sn) > 0 ? 'T-' + Number(sn) : 'T-r' + row);
+    if (seen[id]) id = 'T-r' + row;
+    seen[id] = true;
+
+    var mine = meta[id] || {};
+    out.push({
+      id: id, type: 'Task', title: title,
+      s: readStatus_(line[TASK_COL.status - 1]),
+      pri: readPriority_(line[TASK_COL.priority - 1]),
+      f1: String(line[TASK_COL.assigned - 1] || '').trim(),
+      f2: String(line[TASK_COL.f2 - 1] || '').trim(),
+      sd: toIsoDay_(line[TASK_COL.start - 1]),
+      e: toIsoDay_(line[TASK_COL.end - 1]),
+      sh: String(line[TASK_COL.requester - 1] || '').trim(),
+      ms: String(line[TASK_COL.milestones - 1] || '').trim(),
+      rm: String(line[TASK_COL.remarks - 1] || '').trim(),
+      createdAt: mine.createdAt || '', createdBy: mine.createdBy || '',
+      updatedAt: mine.updatedAt || '', updatedBy: mine.updatedBy || '',
+      role: mine.role || '',
+      __sheet: 'tasks', __row: row,
+      __owned: String(mine.owned || '') === 'yes'
+    });
+  });
+  return out;
+}
+
+/* ---------- writing, in each tab's own columns ---------- */
+
+/** Write into the projects tab, leaving every column the script does not manage as it was. */
+function writeProjectRow_(rowNumber, item) {
   var sh = itemSheet_();
   var range = sh.getRange(rowNumber, 1, 1, ITEM_WIDTH);
   var line = range.getValues()[0];
   var set = function (col, value) { line[col - 1] = value; };
-
   var keep = function (col, value) { if (value !== null && value !== undefined) set(col, value); };
 
   set(ITEM_COL.id, item.id);
-  /* A value the dropdown refuses would fail the whole write, so where nothing fits, the cell
-     is left as it was rather than filled with something untrue. */
   keep(ITEM_COL.type, sheetType_(item.type));
-  keep(ITEM_COL.impact, item.pri ? sheetPriority_(item.pri) : '');
+  keep(ITEM_COL.impact, item.pri ? sheetPriority_(sh, ITEM_COL.impact, item.pri) : '');
   set(ITEM_COL.title, item.title || '');
   set(ITEM_COL.activity, item.ms || '');
   set(ITEM_COL.f1, item.f1 || '');
   set(ITEM_COL.f2, item.f2 || '');
-  set(ITEM_COL.start, dayForSheet_(item.sd));
-  set(ITEM_COL.end, dayForSheet_(item.e));
+  set(ITEM_COL.start, dayForColumn_(sh, ITEM_COL.start, item.sd));
+  set(ITEM_COL.end, dayForColumn_(sh, ITEM_COL.end, item.e));
   set(ITEM_COL.duration, daysBetween_(item.sd, item.e));
-  keep(ITEM_COL.status, item.s ? sheetStatus_(item.s) : '');
+  keep(ITEM_COL.status, item.s ? sheetStatus_(sh, ITEM_COL.status, item.s) : '');
   set(ITEM_COL.stakeholder, item.sh || '');
   set(ITEM_COL.remarks, item.rm || '');
   /* FY is filled only when empty, so a year somebody chose is never overruled. */
@@ -1925,8 +2011,43 @@ function writeItemRow_(rowNumber, item) {
   range.setValues([line]);
 }
 
+/** Write into the tasks tab. The serial number and Ref. ID are given once, on creation. */
+function writeTaskRow_(rowNumber, item, isNew) {
+  var sh = taskSheet_();
+  var range = sh.getRange(rowNumber, 1, 1, TASK_WIDTH);
+  var line = range.getValues()[0];
+  var set = function (col, value) { line[col - 1] = value; };
+  var keep = function (col, value) { if (value !== null && value !== undefined) set(col, value); };
+
+  if (isNew) {
+    var number = parseInt(String(item.id).replace(/^T-/, ''), 10);
+    set(TASK_COL.sn, isNaN(number) ? '' : number);
+    set(TASK_COL.ref, item.id);
+  }
+  set(TASK_COL.assigned, item.f1 || '');
+  keep(TASK_COL.priority, item.pri ? sheetPriority_(sh, TASK_COL.priority, item.pri) : '');
+  set(TASK_COL.title, item.title || '');
+  set(TASK_COL.milestones, item.ms || '');
+  set(TASK_COL.start, dayForColumn_(sh, TASK_COL.start, item.sd));
+  set(TASK_COL.end, dayForColumn_(sh, TASK_COL.end, item.e));
+  set(TASK_COL.duration, daysBetween_(item.sd, item.e));
+  keep(TASK_COL.status, item.s ? sheetStatus_(sh, TASK_COL.status, item.s) : '');
+  set(TASK_COL.requester, item.sh || '');
+  set(TASK_COL.f2, item.f2 || '');
+  set(TASK_COL.remarks, item.rm || '');
+  if (!String(line[TASK_COL.fy - 1] || '').trim() && item.sd) set(TASK_COL.fy, item.sd.slice(0, 4));
+
+  range.setValues([line]);
+}
+
+function sheetFor_(item) {
+  var which = item.__sheet || (item.type === 'Task' ? 'tasks' : 'items');
+  return which === 'tasks' ? taskSheet_() : itemSheet_();
+}
+
 function appendItem_(item) {
-  var sh = itemSheet_();
+  var toTasks = item.type === 'Task';
+  var sh = toTasks ? taskSheet_() : itemSheet_();
   var row = sh.getLastRow() + 1;
 
   /* A write can still be refused - a dropdown nobody told us about, a protected range - and
@@ -1934,13 +2055,13 @@ function appendItem_(item) {
      line carrying nothing but an id. Clearing up after a failed append is this function's
      job, not the next person's. */
   try {
-    writeItemRow_(row, item);
+    if (toTasks) writeTaskRow_(row, item, true); else writeProjectRow_(row, item);
   } catch (err) {
     try { if (sh.getLastRow() >= row) sh.deleteRow(row); } catch (ignored) {}
     throw err;
   }
 
-  saveItemMeta_(item.id, {
+  recordMeta_(item.id, {
     type: item.type, role: item.role || '',
     createdAt: item.createdAt || nowIso_(), createdBy: item.createdBy || '',
     updatedAt: '', updatedBy: '', owned: 'yes'
@@ -1949,17 +2070,33 @@ function appendItem_(item) {
 }
 
 function updateItem_(item) {
-  var row = item.__row;
-  if (!row) {
+  var where = item.__sheet, row = item.__row;
+  if (!row || !where) {
     var all = readItems_();
-    for (var i = 0; i < all.length; i++) if (all[i].id === item.id) { row = all[i].__row; break; }
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].id === item.id) { row = all[i].__row; where = all[i].__sheet; break; }
+    }
   }
   if (!row) throw fail_(404, 'not_found', 'That row is no longer in the spreadsheet');
-  writeItemRow_(row, item);
-  saveItemMeta_(item.id, {
+  if (where === 'tasks') writeTaskRow_(row, item, false); else writeProjectRow_(row, item);
+  recordMeta_(item.id, {
     type: item.type, role: item.role || '',
     updatedAt: item.updatedAt || nowIso_(), updatedBy: item.updatedBy || ''
   });
+}
+
+/** A line carrying an id and nothing else is wreckage from a refused write, never real work. */
+function isStrayRow_(item) {
+  if (item.title) return false;
+  var sh = sheetFor_(item);
+  var width = item.__sheet === 'tasks' ? TASK_WIDTH : ITEM_WIDTH;
+  var idColumns = item.__sheet === 'tasks' ? [TASK_COL.sn, TASK_COL.ref] : [ITEM_COL.id];
+  var line = sh.getRange(item.__row, 1, 1, width).getValues()[0];
+  for (var i = 0; i < line.length; i++) {
+    if (idColumns.indexOf(i + 1) !== -1) continue;
+    if (String(line[i] === null || line[i] === undefined ? '' : line[i]).trim()) return false;
+  }
+  return true;
 }
 
 /**
@@ -1969,30 +2106,55 @@ function updateItem_(item) {
  * delete in the page must never reach it. Those rows are shown, and can be edited, but they
  * can only be removed in the spreadsheet itself.
  */
-/** A line carrying an id and nothing else is wreckage from a refused write, never real work. */
-function isStrayRow_(item) {
-  if (item.title) return false;
-  var line = itemSheet_().getRange(item.__row, 1, 1, ITEM_WIDTH).getValues()[0];
-  for (var i = 0; i < line.length; i++) {
-    if (i === ITEM_COL.id - 1) continue;
-    if (String(line[i] === null || line[i] === undefined ? '' : line[i]).trim()) return false;
-  }
-  return true;
-}
-
 function deleteItem_(item) {
   if (!item.__owned && !isStrayRow_(item)) {
     throw fail_(400, 'not_ours', 'That row was already in the spreadsheet, so this app did not '
       + 'create it and will not delete it. Remove it in the sheet if you really mean to.');
   }
-  itemSheet_().deleteRow(item.__row);
+  sheetFor_(item).deleteRow(item.__row);
   dropItemMeta_(item.id);
+}
+
+/**
+ * Bring one of the script's own tabs to the layout this version expects.
+ *
+ * Columns get added between versions - the meta tab gained "type" - and the generic readers
+ * and writers below go by position. A tab laid out by an older version would then be read
+ * one column off and written one column off, silently. So the header row is compared, and
+ * when it differs the rows are moved by column NAME into the current layout, once. Only the
+ * script's own tabs ever come through here; the team's tabs are never touched.
+ */
+function conformTable_(sh, spec) {
+  var width = Math.max(sh.getLastColumn(), spec.headers.length, 1);
+  var header = sh.getRange(1, 1, 1, width).getValues()[0].map(function (h) { return String(h || '').trim(); });
+  var same = spec.headers.every(function (h, i) { return header[i] === h; })
+    && header.slice(spec.headers.length).every(function (h) { return !h; });
+  if (same) return false;
+
+  var last = sh.getLastRow();
+  var moved = [];
+  if (last >= 2) {
+    var at = {};
+    header.forEach(function (h, i) { if (h && at[h] === undefined) at[h] = i; });
+    sh.getRange(2, 1, last - 1, width).getValues().forEach(function (line) {
+      if (!line.some(function (v) { return String(v === null || v === undefined ? '' : v).length; })) return;
+      moved.push(spec.headers.map(function (h) {
+        var i = at[h];
+        return i === undefined || line[i] === null || line[i] === undefined ? '' : line[i];
+      }));
+    });
+  }
+  if (last >= 1) sh.getRange(1, 1, last, width).clearContent();
+  sh.getRange(1, 1, 1, spec.headers.length).setValues([spec.headers]).setFontWeight('bold');
+  if (moved.length) sh.getRange(2, 1, moved.length, spec.headers.length).setValues(moved);
+  return true;
 }
 
 function sheet_(key) {
   var spec = SHEETS[key];
   var ss = spreadsheet_();
   var sh = ss.getSheetByName(spec.name);
+  if (sh) { conformTable_(sh, spec); return sh; }
   if (!sh) {
     sh = ss.insertSheet(spec.name);
     sh.getRange(1, 1, 1, spec.headers.length).setValues([spec.headers]).setFontWeight('bold');
@@ -2080,16 +2242,7 @@ function markDayColumnsAsText_(key) {
  * an empty header.
  */
 function ensureHeaders_(key) {
-  var spec = SHEETS[key];
-  var sh = sheet_(key);
-  var width = sh.getLastColumn();
-  var current = width ? sh.getRange(1, 1, 1, width).getValues()[0] : [];
-  var same = current.length === spec.headers.length && spec.headers.every(function (h, i) {
-    return String(current[i] || '') === h;
-  });
-  if (same) return false;
-  sh.getRange(1, 1, 1, spec.headers.length).setValues([spec.headers]).setFontWeight('bold');
-  return true;
+  return conformTable_(sheet_(key), SHEETS[key]);
 }
 
 /**

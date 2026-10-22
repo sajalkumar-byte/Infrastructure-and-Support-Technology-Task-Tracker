@@ -115,7 +115,9 @@ const Model={
  watchReqs(cb){this.store.watch('requests',rows=>{this.reqs=rows.filter(r=>r&&r.id);cb()},()=>{})},
 
  /* --- item commands --- */
- async save(o){await this.store.set('items',o.id,o)},
+ /* `fresh` says this is a new item. A server that gives out its own ids must know, or a
+    guessed id that happens to exist already would turn a create into an overwrite. */
+ async save(o,fresh){await this.store.set('items',o.id,o,{fresh:!!fresh})},
  async setStatus(id,s){await this.store.update('items',id,{s})},
  async remove(id){await this.store.remove('items',id)},
 

@@ -61,7 +61,7 @@ const Presenter={
    const id=edit?x.id:Model.nextId(ty);
    const o={id,type:ty,pri:v('#f_p'),title:v('#f_t'),ms:v('#f_m'),f1:v('#f_1'),f2:v('#f_2'),s:edit?x.s:'Ongoing',sd:v('#f_sd'),e:v('#f_e'),sh:v('#f_h'),rm:x.rm||''};
    const btn=m.querySelector('#sb');btn.disabled=true;
-   try{await Model.save(o);m.close();View.toast(edit?'Saved ✓':'Created ✓ – now in Ongoing')}catch(er){btn.disabled=false;View.toast('Could not save: '+(er.code||er.message))}}},
+   try{await Model.save(o,!edit);m.close();View.toast(edit?'Saved ✓':'Created ✓ – now in Ongoing')}catch(er){btn.disabled=false;View.toast('Could not save: '+(er.code||er.message))}}},
 
  /* --- export (PDF / Excel / Print) of what the current page shows --- */
  XCOLS:['ID','Type','Title','Status','Priority','Focal-1','Focal-2','Start','End','Stakeholder','Completion','Milestones / progress','Remarks'],

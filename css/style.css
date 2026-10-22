@@ -7,7 +7,9 @@
   --bs-body-font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;--bs-body-font-size:.9rem;
   --bs-body-bg:#f3f5fb;--bs-body-color:#0f172a;--bs-border-color:#e5e9f2;--bs-secondary-color:#64748b;
   --surface:#fff;--brand:#ec008c;--ac:#4f46e5;--sh:0 1px 2px #0f172a0d,0 4px 14px #0f172a0a;
-  --g-hero:linear-gradient(115deg,#1e1b4b 0%,#6d28d9 55%,#ec008c 100%);--g-accent:linear-gradient(135deg,#4f46e5,#ec008c);--hero-sh:#4c1d9540}
+  /* violet to magenta, as the original header was: #5827b6 at the left, #7d31d5 in the
+     middle, #a315b3 towards the right, lifting into the brand pink at the very end */
+  --g-hero:linear-gradient(100deg,#4c2aa6 0%,#5827b6 22%,#7d31d5 58%,#a315b3 84%,#c41a9c 100%);--g-accent:linear-gradient(135deg,#4f46e5,#ec008c);--hero-sh:#4c1d9540}
 [data-bs-theme="dark"]{
   --bs-body-bg:#0a0f1e;--bs-body-color:#e8ecf5;--bs-border-color:#25304a;--bs-secondary-color:#93a0b8;
   --surface:#131a2d;--sh:0 1px 2px #0006}
@@ -28,13 +30,17 @@ body{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset
 .btn-glass{--bs-btn-color:#fff;--bs-btn-hover-color:#fff;--bs-btn-bg:#ffffff26;--bs-btn-hover-bg:#ffffff40;--bs-btn-border-color:#ffffff40;backdrop-filter:blur(6px);font-weight:600}
 
 /* ---- hero header ---- */
-.hero{position:relative;color:#fff;background:var(--g-hero);background-size:200% 200%;animation:shift 18s ease infinite;border-radius:0 0 28px 28px;box-shadow:0 12px 32px var(--hero-sh)}
+/* The header is one steady colour, not a drifting one: the gradient is shown whole and does
+   not move. */
+.hero{position:relative;color:#fff;background:var(--g-hero);border-radius:0 0 28px 28px;box-shadow:0 12px 32px var(--hero-sh)}
 .hero-fx{position:absolute;inset:0;overflow:hidden;border-radius:inherit;z-index:0;pointer-events:none}
 .hero-fx:before{content:"";position:absolute;right:-60px;top:-90px;width:320px;height:320px;border-radius:50%;background:radial-gradient(#ffffff30,transparent 70%)}
 .hero-fx:after{content:"";position:absolute;left:38%;bottom:-130px;width:380px;height:380px;border-radius:50%;background:radial-gradient(#ffffff1a,transparent 70%)}
 .hero>*{position:relative;z-index:1}.hero>.hero-fx{position:absolute;z-index:0}
-.logo{height:64px;padding:9px 18px;border-radius:18px;background:#fff;display:grid;place-items:center;box-shadow:0 4px 14px #0003}
-.logo img{height:46px;width:auto;display:block}
+/* The logo is a transparent PNG, so it sits straight on the header with nothing behind it.
+   A faint shadow keeps the pink mark legible where the gradient is lightest. */
+.logo{height:64px;display:grid;place-items:center}
+.logo img{height:52px;width:auto;display:block;filter:drop-shadow(0 2px 6px #0005)}
 .hero h1{font-size:1.45rem;font-weight:800;letter-spacing:-.015em;line-height:1.2}.hero h1 span{font-weight:500;font-size:1.05rem;opacity:.93}
 .live{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;opacity:.92}
 .live i{width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 3px #4ade8044}.live.off i{background:#fbbf24;box-shadow:none}

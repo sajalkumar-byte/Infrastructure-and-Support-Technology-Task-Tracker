@@ -149,6 +149,12 @@ function load({ logs = [], outbox = [] } = {}) {
     'Focal-1', 'Focal-2', 'Start Date', 'End Date', 'Duration', 'Status', 'Stakeholder',
     'Budget (If any)', 'Remarks'];
   spreadsheet.insertSheet(TEAM_TAB).getRange(1, 1, 1, TEAM_HEADERS.length).setValues([TEAM_HEADERS]);
+  /* And the tasks tab, with its own fifteen headings. */
+  const TASK_TAB = 'Individual Task List';
+  const TASK_HEADERS = ['SN', 'Ref. ID', 'Assigned to', 'Priority', 'FY', 'Task Title',
+    'Mile stones : Current Status', 'Starting Date', 'End Date', 'Duration  (C.Days)', 'Status',
+    'Requester  (Unit/Client)', 'Vendor', 'Focal-2', 'Remarks / Note'];
+  spreadsheet.insertSheet(TASK_TAB).getRange(1, 1, 1, TASK_HEADERS.length).setValues([TASK_HEADERS]);
   const properties = new Map();
   const cache = new Map();            // key -> {value, until}
   let uuidCounter = 0;
@@ -268,7 +274,7 @@ function load({ logs = [], outbox = [] } = {}) {
     return JSON.parse(output.getContent());
   };
 
-  return { sandbox, call, spreadsheet, properties, cache, logs, outbox, TEAM_TAB, TEAM_HEADERS };
+  return { sandbox, call, spreadsheet, properties, cache, logs, outbox, TEAM_TAB, TEAM_HEADERS, TASK_TAB, TASK_HEADERS };
 }
 
 module.exports = { load };

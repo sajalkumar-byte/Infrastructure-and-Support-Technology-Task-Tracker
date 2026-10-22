@@ -252,9 +252,17 @@
       });
     }
 
-    async set(collection, id, object) {
+    async set(collection, id, object, options) {
       if (collection === 'items') {
-        await this.call('saveItem', { id: id, item: object });
+        if (options && options.fresh) {
+          /* The page guessed an id from what it had loaded, but somebody else may have taken it
+             since. Sending it would make the server update that row. New items go without one,
+             and the sheet hands back the id it actually gave. */
+          var fresh = Object.assign({}, object); delete fresh.id;
+          await this.call('saveItem', { item: fresh });
+        } else {
+          await this.call('saveItem', { id: id, item: object });
+        }
       } else if (collection === 'users') {
         await this.saveUser(id, object);
       } else if (collection === 'requests') {

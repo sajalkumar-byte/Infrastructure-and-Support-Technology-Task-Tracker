@@ -161,9 +161,14 @@
       }
     }
 
-    async set(collection, id, object) {
+    async set(collection, id, object, options) {
       if (collection === 'items') {
-        await this.request('PUT', `/api/items/${encodeURIComponent(id)}`, object);
+        if (options && options.fresh) {
+          const fresh = { ...object }; delete fresh.id;      // the server gives out ids
+          await this.request('POST', '/api/items', fresh);
+        } else {
+          await this.request('PUT', `/api/items/${encodeURIComponent(id)}`, object);
+        }
       } else if (collection === 'users') {
         await this.saveUser(id, object);
       } else if (collection === 'requests') {
