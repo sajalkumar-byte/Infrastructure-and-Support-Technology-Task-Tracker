@@ -148,8 +148,38 @@ test('a team row marked Drive is a task by default, a drive when asked, and neve
   });
   assert.ok(!mine.error, JSON.stringify(mine.error || {}));
   assert.equal(find(mine.id).type, 'Drive');
-  assert.equal(spreadsheet.getSheetByName(PROJECTS).rows.find(r => r[0] === mine.id)[1], 'Drive',
-    'and in the sheet it is a Drive, which is what that dropdown has for it');
+  assert.equal(spreadsheet.getSheetByName(PROJECTS).rows.find(r => r[0] === mine.id)[1], 'Recurring',
+    'and in the sheet it says Recurring, in so many words');
+});
+
+test('a recurring item is sent as "Recurring", and the dropdown is taught the word once', () => {
+  const { call, tokens, spreadsheet } = workbook();
+  const projects = spreadsheet.getSheetByName(PROJECTS);
+  projects.getRange(2, 2).setDataValidationList(['Drive', 'Project']);
+
+  const made = call('saveItem', {
+    token: tokens.admin,
+    item: { type: 'Drive', title: 'Monthly backup test', f1: 'Amina', sd: '2026-10-01', ud: '2026-10-23' },
+  });
+  assert.ok(!made.error, JSON.stringify(made.error || {}));
+
+  const line = projects.rows.find(r => r[0] === made.id);
+  assert.equal(line[1], 'Recurring', 'the cell says Recurring');
+  assert.deepEqual(projects.validations[1], ['Drive', 'Project', 'Recurring'],
+    'the dropdown gained the word and lost nothing');
+
+  /* Read back as recurring even with the bookkeeping gone: the word in the cell is enough. */
+  const meta = spreadsheet.getSheetByName('Tracker Item Meta');
+  meta.rows.splice(meta.rows.findIndex(r => r[0] === made.id), 1);
+  const back = call('listItems', { token: tokens.admin }).items.find(i => i.id === made.id);
+  assert.equal(back.type, 'Drive', 'Recurring in the cell reads as recurring');
+
+  /* The team's own "Drive" rows are still their tasks. */
+  assert.equal(call('listItems', { token: tokens.admin }).items.find(i => i.id === 'D-1').type, 'Task');
+
+  /* A second recurring item does not touch the dropdown again. */
+  call('saveItem', { token: tokens.admin, item: { type: 'Drive', title: 'Weekly patching', f1: 'Amina' } });
+  assert.deepEqual(projects.validations[1], ['Drive', 'Project', 'Recurring']);
 });
 
 test('a recurring item has a start date and an update date, and no end date anywhere', () => {

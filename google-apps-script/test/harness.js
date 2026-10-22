@@ -36,10 +36,20 @@ class FakeRange {
   getDataValidation() {
     const list = this.sheet.validations[this.col - 1];
     if (!list) return null;
-    return {
+    const rule = {
       getCriteriaType: () => 'VALUE_IN_LIST',
-      getCriteriaValues: () => [list.slice()],
+      getCriteriaValues: () => [list.slice(), true],
+      /* the builder the real rule hands back, enough of it to add a word */
+      copy: () => ({
+        requireValueInList(values) { this._values = values.slice(); return this; },
+        build() { return { _values: this._values }; },
+      }),
     };
+    return rule;
+  }
+  setDataValidation(rule) {
+    for (let c = 0; c < this.numCols; c++) this.sheet.validations[this.col - 1 + c] = rule._values.slice();
+    return this;
   }
   setDataValidationList(values) { this.sheet.validations[this.col - 1] = values.slice(); return this; }
   getValues() {

@@ -672,8 +672,10 @@ test('a role tab shows that role its own rows, split by type', () => {
   assert.match(admin, /FILTER\('IS Project & Drive'!A2:O/);
   assert.match(admin, /COUNTIFS\('Tracker Item Meta'!\$A\$2:\$A, 'IS Project & Drive'!A2:A, 'Tracker Item Meta'!\$B\$2:\$B, "admin"\)>0/);
   assert.match(role('Admin Projects'), /'IS Project & Drive'!B2:B="Project"/);
-  assert.match(role('Admin Recurring'), /'IS Project & Drive'!B2:B="Drive"/);
-  assert.match(role('Superuser Tasks'), /"superuser"\)>0, 'IS Project & Drive'!B2:B="Task"/);
+  assert.match(role('Admin Recurring'), /'IS Project & Drive'!B2:B="Recurring"/);
+  assert.match(role('Admin Tasks'), /'IS Project & Drive'!B2:B="Drive"/, 'Drive is the team word for a task');
+  assert.match(role('Superuser Tasks'), /"superuser"\)>0, 'IS Project & Drive'!B2:B="Drive"/,
+    'a task view matches the team word for a task');
   /* Grouped by type, then by id, and an empty tab rather than an error when there is nothing. */
   assert.match(role('Viewer data'), /^=IFERROR\(SORT\(.*, 2, TRUE, 1, TRUE\), ""\)$/);
 });
@@ -983,9 +985,9 @@ test('a task never meets the projects tab dropdown, because it has a tab of its 
   assert.ok(spreadsheet.getSheetByName('Individual Task List').rows.some(r => r[1] === made.id),
     'the task is in the tasks tab');
 
-  /* And a drive still has to fit the dropdown, which it does. */
+  /* And a recurring item goes in by its own name: the dropdown is taught the word. */
   const drive = call('saveItem', { token: tokens.admin, item: { type: 'Drive', title: 'Patching', f1: 'Sohel' } });
-  assert.equal(projects.rows.find(r => r[0] === drive.id)[1], 'Drive');
+  assert.equal(projects.rows.find(r => r[0] === drive.id)[1], 'Recurring');
 });
 test('the words the dropdowns use are the words that get written', () => {
   /* A workbook that says Medium rather than Mid, or On-Going rather than Ongoing, is written

@@ -131,7 +131,9 @@ function viewFormula_(view) {
   var match = 'COUNTIFS(' + meta + '!$A$2:$A, ' + items + '!A2:A, '
     + meta + '!$B$2:$B, "' + view.role + '")>0';
   var filter = 'FILTER(' + rows + ', ' + match;
-  if (view.type) filter += ', ' + items + '!B2:B="' + view.type + '"';
+  /* The cells say Project, Recurring or Drive - and Drive is the team's word for a task. */
+  var word = { Project: 'Project', Drive: 'Recurring', Task: 'Drive' }[view.type];
+  if (view.type) filter += ', ' + items + '!B2:B="' + word + '"';
   filter += ')';
   /* Grouped by type, then in the order the ids were given out. A role with nothing to show
      gets an empty tab rather than #N/A. */
@@ -1864,11 +1866,45 @@ function fitToList_(preferences, allowed) {
   return null;
 }
 
+/**
+ * Make sure a dropdown offers a word, adding it if it does not.
+ *
+ * The Type column offered Drive and Project, so a recurring item created in the page was
+ * being filed as "Drive" - the nearest word allowed. The team asked for it to say Recurring,
+ * and the only way a cell can say that is for the dropdown to allow it. Adding an option
+ * removes nothing and changes no existing cell; it is the one alteration this script makes
+ * to the team's own rules, and it makes it once.
+ */
+function ensureDropdownWord_(sh, column, word) {
+  var allowed = allowedValues_(sh, column);
+  if (!allowed) return;                                   // no list: anything may be written
+  for (var i = 0; i < allowed.length; i++) {
+    if (allowed[i].toLowerCase() === word.toLowerCase()) return;
+  }
+  try {
+    var rule = sh.getRange(2, column).getDataValidation();
+    var criteria = rule.getCriteriaValues();
+    var showDropdown = criteria.length > 1 ? criteria[1] !== false : true;
+    var extended = rule.copy().requireValueInList(allowed.concat([word]), showDropdown).build();
+    sh.getRange(2, column, Math.max(sh.getMaxRows() - 1, 1), 1).setDataValidation(extended);
+    MEMO_.validation[sh.getName() + ':' + column] = allowed.concat([word]);
+  } catch (err) {
+    Logger.log('Could not add "%s" to the dropdown in column %s: %s', word, column, err.message);
+  }
+}
+
 function sheetType_(type) {
-  /* A task has no entry in this dropdown, so one that ends up in this tab is filed as a drive -
-     the nearest thing it offers. Its own tab is where tasks normally go. */
-  var order = type === 'Project' ? ['Project', 'Drive'] : ['Drive', 'Project'];
-  return fitToList_(order, allowedValues_(itemSheet_(), ITEM_COL.type));
+  var sh = itemSheet_();
+  if (type === 'Drive') {
+    /* recurring, in the page's own word; the dropdown is taught it if need be */
+    ensureDropdownWord_(sh, ITEM_COL.type, 'Recurring');
+    return fitToList_(['Recurring', 'Drive', 'Project'], allowedValues_(sh, ITEM_COL.type));
+  }
+  if (type === 'Task') {
+    /* a task has a tab of its own; one that ends up here anyway is filed under Drive */
+    return fitToList_(['Drive', 'Project'], allowedValues_(sh, ITEM_COL.type));
+  }
+  return fitToList_(['Project', 'Drive'], allowedValues_(sh, ITEM_COL.type));
 }
 
 function sheetPriority_(sh, column, pri) {
@@ -1963,11 +1999,16 @@ function readProjectRows_(meta) {
     if (!id && !title) return;
 
     var mine = meta[id] || {};
-    var kind = readType_(line[ITEM_COL.type - 1]);
-    /* The page's own record of what it made wins over the two words the cell can hold. */
+    var word = String(line[ITEM_COL.type - 1] || '').trim().toLowerCase();
+    /* The page's own record of what it made wins. Failing that, the cell: "Recurring" is a
+       recurring item, "Drive" is the team's word for a task, anything else is a project. */
+    var kind;
     if (mine.type) kind = mine.type;
     else if (id.indexOf('T-') === 0) kind = 'Task';
-    else if (kind === 'Drive') kind = showDrivesAs;
+    else if (word.indexOf('recurring') === 0) kind = 'Drive';
+    else if (word.indexOf('drive') === 0) kind = showDrivesAs;
+    else if (word.indexOf('task') === 0) kind = 'Task';
+    else kind = 'Project';
 
     out.push({
       id: id, type: kind, title: title,
