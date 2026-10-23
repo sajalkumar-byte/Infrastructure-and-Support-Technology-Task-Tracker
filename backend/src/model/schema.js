@@ -9,6 +9,7 @@ const TABLES = {
   items:    { key: 'id',        columns: ['id', 'type', 'title', 's', 'pri', 'f1', 'f2', 'sd', 'e', 'sh', 'ms', 'rm', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'role', 'ud'] },
   sessions: { key: 'tokenHash', columns: ['tokenHash', 'email', 'csrf', 'createdAt', 'expiresAt', 'userAgent', 'ip'] },
   requests: { key: 'id',        columns: ['id', 'email', 'name', 'at'] },
+  team:     { key: 'id',        columns: ['id', 'name', 'title', 'email', 'at', 'by'] },
   archive:  { key: 'id',        columns: ['id', 'rows', 'at'] },
   resets:   { key: 'email',     columns: ['email', 'codeHash', 'expiresAt', 'attempts', 'createdAt'] },
   messages: { key: 'id',        columns: ['id', 'conversation', 'fromEmail', 'toEmail', 'body', 'at', 'readAt'] },

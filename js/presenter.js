@@ -143,6 +143,7 @@ const Presenter={
  usesPasswords(){return this.isLocal()||this.isApi()},
  setGate(kind,msg){this.gate={kind,msg:msg||''};this.draw()},
  signIn(u,remember){Model.session={email:u.email,name:u.name,role:u.role,id:u.id||'',owner:!!u.owner};
+  if(!this._teamWatched){this._teamWatched=true;Model.watchTeam(()=>{if(Model.session)this.draw()})}
   if(remember&&this.isLocal())try{localStorage.setItem('tracker.session',u.email)}catch(e){}
   Model.start(e=>this.syncStatus(e));this.syncStatus();View.who(Model.session,this.usesPasswords());this.tab='overview';this.draw();
   this.startChat()},
@@ -395,6 +396,7 @@ const Presenter={
  bindEvents(){
   document.addEventListener('click',e=>{const t=e.target.closest('[data-a]');if(!t)return;const a=t.dataset.a,v=t.dataset.v;if(t.tagName==='A')e.preventDefault();
    if(a==='go')this.go(v);else if(a==='kpi'){View.hideFly();this.F.st=v;this.go(this.PT[this.tab]?this.tab:'projects')}else if(a==='fly-close')View.hideFly();else if(a==='person'){this.SEL=v;this.go('team')}
+   else if(a==='team-add'||a==='team-edit')this.openMember(v);else if(a==='team-del')this.removeMember(v);
    else if(a==='pf'){const[k,z]=v.split('|');if(k==='Task'){this.TF={q:'',who:'',st:z,n:100};this.go('tasks')}else{this.F={q:'',pri:'',who:'',st:z};this.go(PAGES[k].tab)}}
    else if(a==='open')this.openItem(v);else if(a==='new')this.openForm(null,v);else if(a==='export')this.export(v);else if(a==='theme')this.setTheme(v)
    else if(a==='users')this.openUsers();else if(a==='share')this.openShare();else if(a==='signout')this.signOut()
@@ -409,6 +411,33 @@ const Presenter={
   const scrim=$('#chatscrim');if(scrim)scrim.onclick=()=>this.closeChat();
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&View.chatIsOpen()&&!document.querySelector('.modal.show'))this.closeChat()});
   Model.onChange(()=>{if(Model.session){this.draw();this.announceOverdue()}})},
+
+ /* --- the team roster: only the super admin may change it --- */
+ teamGuard(){if(Model.can('manage'))return true;View.toast('Only the super admin can change the team');return false},
+ openMember(name){if(!this.teamGuard())return;
+  const existing=name?Model.member(name):null;
+  const x=existing||{id:Model.memberId(name||''),name:name||'',title:'',email:''};
+  const m=View.member(x,!existing);
+  m.querySelector('#tm_save').onclick=async()=>{const v=i=>m.querySelector(i).value.trim();
+   const nm=v('#tm_name');if(!nm){View.toast('A name is required');return}
+   const rec={id:existing?existing.id:Model.memberId(nm),name:nm,title:v('#tm_title'),email:Model.uid(v('#tm_email')),at:existing?existing.at:today10(),by:Model.session.email};
+   const btn=m.querySelector('#tm_save');btn.disabled=true;
+   try{
+    await Model.saveMember(rec);
+    /* a renamed member is offered a rename on their items, which is usually what is meant */
+    const old=existing?existing.name:(name||'');
+    if(old&&old.trim().toLowerCase()!==nm.trim().toLowerCase()){
+     const n=Model.all().filter(p=>own(p).includes(old)).length;
+     if(n&&confirm(`Also rename "${old}" to "${nm}" on ${n} item${n===1?'':'s'}?`)){const k=await Model.renamePerson(old,nm);View.toast(`Renamed on ${k} item${k===1?'':'s'}`)}
+     if(this.SEL===old)this.SEL=nm}
+    m.close();View.toast(existing?'Member updated ✓':'Member added ✓');this.draw()}
+   catch(e){btn.disabled=false;View.toast('Could not save: '+(e.message||e))}};
+  const del=m.querySelector('#tm_del');if(del)del.onclick=()=>{m.close();this.removeMember(x.name)}},
+ async removeMember(name){if(!this.teamGuard())return;
+  const mem=Model.member(name);if(!mem){View.toast('That person is not on the roster');return}
+  if(!confirm(`Remove ${mem.name} from the team? Their items stay exactly as they are.`))return;
+  try{await Model.removeMember(mem.id);if(this.SEL===mem.name)this.SEL='';View.toast('Removed from the team');this.draw()}
+  catch(e){View.toast('Could not remove: '+(e.message||e))}},
 
  /* --- the flying overdue message ---
     Sent when something is late that has not been announced in this session: on arrival, and

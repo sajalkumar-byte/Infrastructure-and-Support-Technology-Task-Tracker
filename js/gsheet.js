@@ -61,7 +61,7 @@
          client falls back to polling, which it already knows how to do. */
       this.supportsChat = true;
       this.subs = {};
-      this.cache = { items: [], taskhist: [], users: [], requests: [] };
+      this.cache = { items: [], taskhist: [], users: [], requests: [], team: [] };
       this.usersById = {};
       this.token = readToken();
       this.session = null;
@@ -287,6 +287,8 @@
         await this.saveUser(id, object);
       } else if (collection === 'requests') {
         await this.call('createRequest', object);
+      } else if (collection === 'team') {
+        await this.call('saveTeam', object);
       } else if (collection === 'taskhist') {
         await this.call('saveArchive', { id: id, rows: (object && object.rows) || [] });
       }
@@ -313,7 +315,16 @@
       if (collection === 'items') await this.call('deleteItem', { id: id });
       else if (collection === 'users') await this.call('deleteUser', { email: this.emailFor(id) });
       else if (collection === 'requests') await this.call('deleteRequest', { id: id });
+      else if (collection === 'team') await this.call('deleteTeam', { id: id });
       await this.refresh(collection);
+    }
+
+    /** Rename a person on every item at once, server side, then reread the items. */
+    async renamePerson(from, to) {
+      var result = await this.call('renamePerson', { from: from, to: to });
+      this.rev = '';
+      await this.refresh('items');
+      return (result && result.count) || 0;
     }
 
     emailFor(docId) {
@@ -358,6 +369,10 @@
           var arch = await this.call('listArchive');
           this.cache.taskhist = (arch && arch.batches) || [];
           this.emit('taskhist');
+        } else if (collection === 'team') {
+          var roster = await this.call('listTeam');
+          this.cache.team = (roster && roster.members) || [];
+          this.emit('team');
         } else if (collection === 'users' || collection === 'requests') {
           if (this.role !== 'superadmin') {
             this.cache.users = []; this.cache.requests = [];

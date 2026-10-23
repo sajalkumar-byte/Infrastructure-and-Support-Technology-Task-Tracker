@@ -18,6 +18,7 @@ const routes = [
   require('./routes/users'),
   require('./routes/items'),
   require('./routes/meta'),
+  require('./routes/team'),
 ];
 
 function buildRouter(live) {

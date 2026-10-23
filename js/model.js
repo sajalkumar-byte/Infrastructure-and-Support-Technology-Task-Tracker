@@ -72,6 +72,7 @@ const Model={
  store:null,user:null,
  items:[],hist:[],
  users:[],reqs:[],
+ team:[],           /* the roster the super admin keeps: {id,name,title,email,at,by} */
  session:null,      /* {email,name,role,id?,owner?} – who is signed in */
  platWrite:true,    /* false when the claude.ai platform forbids shared-data writes for this viewer */
  listeners:[],
@@ -85,7 +86,23 @@ const Model={
  own(p){return[this.base(p.f1),this.base(p.f2)].filter(Boolean)},
  over:p=>p.s==='Ongoing'&&p.e&&new Date(p.e+'T00:00:00')<today,
  pct(p){const l=splitMs(p.ms);if(p.s==='Done')return 100;if(l.length<2)return null;return Math.round(l.filter(x=>/done|complete/i.test(x)).length/l.length*100)},
- people(){return[...new Set(this.all().map(p=>this.base(p.f1)).filter(Boolean))].sort()},
+ /* Everyone: the roster the super admin keeps, plus anybody named on an item who is not on
+    it yet, so nobody disappears from the Team page for not having been added. */
+ people(){return[...new Set(this.team.map(m=>m.name).concat(this.all().map(p=>this.base(p.f1))).filter(Boolean))].sort()},
+ member(name){const n=String(name||'').trim().toLowerCase();return this.team.find(m=>String(m.name).trim().toLowerCase()===n)||null},
+ memberId(name){return 'm_'+(String(name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_')||Date.now())},
+ watchTeam(cb){this.store.watch('team',rows=>{this.team=(rows||[]).filter(m=>m&&m.name);cb()},()=>cb())},
+ async saveMember(m){await this.store.set('team',m.id,m)},
+ async removeMember(id){await this.store.remove('team',id)},
+ /* Rename a person wherever they are Focal-1 or Focal-2. A store that can do it in one go
+    does; otherwise each item is updated in turn. Returns how many items changed. */
+ async renamePerson(from,to){
+  if(this.store.renamePerson)return this.store.renamePerson(from,to);
+  const same=(a,b)=>String(a||'').trim().toLowerCase()===String(b||'').trim().toLowerCase();
+  let n=0;for(const p of this.items){const patch={};
+   if(same(this.base(p.f1),from))patch.f1=to;if(same(this.base(p.f2),from))patch.f2=to;
+   if(Object.keys(patch).length){await this.store.update('items',p.id,patch);n++}}
+  return n},
  counts(n){const r={};TY.forEach(t=>r[t]={Ongoing:0,'On Hold':0,Done:0,Listed:0,Closed:0});
   this.all().forEach(p=>{if(this.own(p).includes(n)&&r[p.type])r[p.type][p.s]++});return r},
  nextId(type){const pf=PF[type]+'-';const n=Math.max(0,...this.all().map(p=>String(p.id||'').startsWith(pf)?+String(p.id).slice(pf.length)||0:0))+1;return pf+n},

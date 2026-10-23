@@ -38,7 +38,7 @@
       this.flavour = 'node';
       this.supportsChat = true;       // the Node server carries the Socket.IO side of chat
       this.subs = {};                 // collection -> [callback]
-      this.cache = { items: [], taskhist: [], users: [], requests: [] };
+      this.cache = { items: [], taskhist: [], users: [], requests: [], team: [] };
       this.usersById = {};            // the browser's underscore id -> email
       this.pollMs = 8000;
       this.timer = null;
@@ -173,6 +173,8 @@
         await this.saveUser(id, object);
       } else if (collection === 'requests') {
         await this.request('POST', '/api/requests', object);
+      } else if (collection === 'team') {
+        await this.request('POST', '/api/team', object);
       } else if (collection === 'taskhist') {
         await this.request('PUT', `/api/items/archive/${encodeURIComponent(id)}`, { rows: object.rows || [] });
       }
@@ -195,6 +197,13 @@
       await this.refresh(collection);
     }
 
+    /** Rename a person on every item at once, server side, then reread the items. */
+    async renamePerson(from, to) {
+      const result = await this.request('POST', '/api/team/rename', { from, to });
+      await this.refresh('items');
+      return (result && result.count) || 0;
+    }
+
     async remove(collection, id) {
       if (collection === 'items') {
         await this.request('DELETE', `/api/items/${encodeURIComponent(id)}`);
@@ -202,6 +211,8 @@
         await this.request('DELETE', `/api/users/${encodeURIComponent(this.emailFor(id))}`);
       } else if (collection === 'requests') {
         await this.request('DELETE', `/api/requests/${encodeURIComponent(id)}`);
+      } else if (collection === 'team') {
+        await this.request('DELETE', `/api/team/${encodeURIComponent(id)}`);
       }
       await this.refresh(collection);
     }
@@ -251,6 +262,10 @@
           const data = await this.request('GET', '/api/items/archive');
           this.cache.taskhist = (data && data.batches) || [];
           this.emit('taskhist');
+        } else if (collection === 'team') {
+          const roster = await this.request('GET', '/api/team');
+          this.cache.team = (roster && roster.members) || [];
+          this.emit('team');
         } else if (collection === 'users' || collection === 'requests') {
           /* One call returns both; only a super admin may make it. */
           if (this.role !== 'superadmin') {

@@ -221,7 +221,27 @@ const View={
    const grp=s=>{const a=A.filter(p=>p.s===s);if(!a.length)return '';
     return `<details ${['Ongoing','On Hold','Listed'].includes(s)?'open':''}><summary style="color:${COL[s]}">${s} (${a.length})</summary><ul class="list-group list-group-flush">${a.sort((x,y)=>(y.e||'')<(x.e||'')?-1:1).slice(0,s==='Done'?60:200).map(p=>`<li class="list-group-item list-group-item-action d-flex justify-content-between gap-2 px-0" data-a="open" data-v="${esc(p.id)}"><span><span class="badge rounded-pill b" style="--c:#64748b">${LBL[p.type]||p.type}</span> ${esc(p.title)}</span><em>${base(p.f1)===SEL?'Lead':'Support'} · ${fd(p.e)}</em></li>`).join('')}</ul></details>`};
    return this.ph('👤',esc(SEL),'Projects, recurring items and tasks – Ongoing, On Hold and Done','#7c3aed',xbtns()+'<button class="btn btn-outline-secondary" data-a="person" data-v="">← All members</button>')+`<div class="row g-3"><div class="col-12 col-lg-5">${card('#7c3aed',this.person(SEL,'fs-5')+this.mt(r))}</div><div class="col-12 col-lg-7">${card('#7c3aed',ST.map(grp).join('')||empty('No items yet'))}</div></div>`}
-  return this.ph('👥','Team','Workload of every member – click a card for the full list','#7c3aed',xbtns())+`<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">${Model.people().map((n,i)=>`<div class="col a-up" style="--i:${i}">${card(avc(n),this.person(n)+this.mt(Model.counts(n)),'pc" data-a="person" data-v="'+esc(n))}</div>`).join('')||'<div class="col">'+empty('No team members yet – create a project or task to get started.')+'</div>'}</div><p class="text-secondary small mt-3">Counts include items where the person is Focal-1 or Focal-2. Click a member for full list.</p>`},
+  /* Only the super admin may change the roster; everyone else sees the same page without
+     the controls. A member who is on the roster shows their designation and email; a name
+     that only appears on items is marked unlisted, with a way to add them. */
+  const manage=Model.can('manage');
+  const tools=n=>{if(!manage)return '';const m=Model.member(n);
+   return m?`<div class="d-flex gap-2 mt-2 team-tools"><button class="btn btn-sm btn-outline-secondary" data-a="team-edit" data-v="${esc(n)}">✎ Edit</button><button class="btn btn-sm btn-outline-danger" data-a="team-del" data-v="${esc(n)}">Remove</button></div>`
+    :`<div class="d-flex gap-2 mt-2 team-tools"><span class="badge text-bg-light text-secondary align-self-center">unlisted</span><button class="btn btn-sm btn-outline-secondary" data-a="team-add" data-v="${esc(n)}">＋ Add to team</button></div>`};
+  const detail=n=>{const m=Model.member(n);if(!m||(!m.title&&!m.email))return '';
+   return `<div class="text-secondary small mt-n2 mb-2">${esc(m.title||'')}${m.title&&m.email?' · ':''}${esc(m.email||'')}</div>`};
+  return this.ph('👥','Team','Workload of every member – click a card for the full list','#7c3aed',xbtns()+(manage?'<button class="btn btn-brand" data-a="team-add" data-v="">＋ Add member</button>':''))+`<div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3">${Model.people().map((n,i)=>`<div class="col a-up" style="--i:${i}">${card(avc(n),this.person(n)+detail(n)+this.mt(Model.counts(n))+tools(n),'pc" data-a="person" data-v="'+esc(n))}</div>`).join('')||'<div class="col">'+empty(manage?'No team members yet – add one with the button above.':'No team members yet.')+'</div>'}</div><p class="text-secondary small mt-3">Counts include items where the person is Focal-1 or Focal-2. Click a member for the full list.${manage?' Only the super admin can add, edit or remove members.':''}</p>`},
+
+ /* The member dialog: name, designation, email. Removing is offered here too, with the
+    reminder that their items are not touched by it. */
+ member(x,isNew){
+  const fld=(lbl,html)=>`<div class="mb-3"><label class="form-label small fw-semibold text-secondary mb-1">${lbl}</label>${html}</div>`;
+  return this.modalShell({c:'#7c3aed',size:'modal-md',
+   title:`<h2 class="h5 fw-bold mb-0">${isNew?'Add team member':'Edit team member'}</h2><div class="text-secondary small">${isNew?'They will appear on the Team page and in the Focal lists':'Renaming can also rename them on their items'}</div>`,
+   body:fld('Name *',`<input class="form-control" id="tm_name" value="${esc(x.name||'')}" autocomplete="off">`)
+    +fld('Designation',`<input class="form-control" id="tm_title" value="${esc(x.title||'')}" placeholder="e.g. Senior Officer, IS">`)
+    +fld('Email',`<input class="form-control" id="tm_email" type="email" value="${esc(x.email||'')}" placeholder="optional">`),
+   foot:(isNew?'':'<button class="btn btn-outline-danger me-auto" id="tm_del">Remove from team</button>')+'<button class="btn btn-brand" id="tm_save">Save</button>'})},
 
  /* --- chat lives in a floating panel, not a page --- */
 

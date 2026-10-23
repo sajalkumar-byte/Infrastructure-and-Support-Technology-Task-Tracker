@@ -493,3 +493,63 @@ test('changing your own password keeps this device signed in and drops the other
   /* put it back so later tests still know the password */
   await call('POST', '/api/auth/password', { token: here, body: { currentPassword: 'nextone1', newPassword: 'viewerpw' } });
 });
+
+/* ---------------------------------------------------------------- the team roster */
+/* Earlier tests revoke and reassign the role tokens, so the roster tests sign in people of
+   their own rather than reuse a token something else has already ended. */
+async function freshToken(role, email, password) {
+  await call('POST', '/api/users', { token: tokens.superadmin, body: { email, name: 'Roster ' + role, role, password } });
+  return (await call('POST', '/api/auth/login', { body: { email, password } })).body.token;
+}
+
+test('team: the super admin adds, edits and removes members; everyone may read the roster', async () => {
+  const viewer = await freshToken('viewer', 'roster-viewer@example.com', 'viewerpw');
+  const added = await call('POST', '/api/team', { token: tokens.superadmin, body: { name: 'Mosiar Rahman', title: 'Senior Officer, IS', email: 'Mosiar@brac.net' } });
+  assert.equal(added.status, 200, JSON.stringify(added.body));
+  assert.equal(added.body.id, 'm_mosiar_rahman');
+  assert.equal(added.body.email, 'mosiar@brac.net');
+
+  const seen = await call('GET', '/api/team', { token: viewer });
+  assert.equal(seen.status, 200);
+  assert.equal(seen.body.members.length, 1, 'a viewer can read the roster');
+
+  const edited = await call('POST', '/api/team', { token: tokens.superadmin, body: { id: added.body.id, name: 'Mosiar Rahman', title: 'Lead, IS' } });
+  assert.equal(edited.body.title, 'Lead, IS');
+  assert.equal((await call('GET', '/api/team', { token: viewer })).body.members.length, 1, 'an edit adds no row');
+
+  const gone = await call('DELETE', `/api/team/${added.body.id}`, { token: tokens.superadmin });
+  assert.equal(gone.status, 200);
+  assert.equal((await call('GET', '/api/team', { token: viewer })).body.members.length, 0);
+});
+
+test('team: nobody but the super admin may change the roster', async () => {
+  const others = {
+    admin: await freshToken('admin', 'roster-admin@example.com', 'adminpw'),
+    superuser: await freshToken('superuser', 'roster-super@example.com', 'superpw'),
+    viewer: await freshToken('viewer', 'roster-viewer2@example.com', 'viewerpw'),
+  };
+  for (const who of Object.keys(others)) {
+    assert.equal((await call('POST', '/api/team', { token: others[who], body: { name: 'Intruder' } })).status, 403, who);
+    assert.equal((await call('DELETE', '/api/team/m_x', { token: others[who] })).status, 403, who);
+    assert.equal((await call('POST', '/api/team/rename', { token: others[who], body: { from: 'A', to: 'B' } })).status, 403, who);
+  }
+  assert.equal((await call('POST', '/api/team', { token: tokens.superadmin, body: { name: '  ' } })).status, 400);
+});
+
+test('team: renaming a person renames them on every item they are on, and nowhere else', async () => {
+  const mk = (type, title, f1, f2) => call('POST', '/api/items', { token: tokens.admin, body: { type, title, f1, f2 } });
+  const a = await mk('Project', 'Core banking', 'Mosiar', 'Sarwar');
+  const b = await mk('Task', 'UPS battery', 'Sarwar', 'Mosiar');
+  const c = await mk('Task', 'SSL renewal', 'Azmir', '');
+  assert.equal(a.status, 201); assert.equal(b.status, 201); assert.equal(c.status, 201);
+
+  const done = await call('POST', '/api/team/rename', { token: tokens.superadmin, body: { from: 'mosiar', to: 'Md. Mosiar Rahman' } });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(done.body.count, 2);
+
+  const get = async id => (await call('GET', `/api/items/${id}`, { token: tokens.admin })).body;
+  assert.equal((await get(a.body.id)).f1, 'Md. Mosiar Rahman');
+  assert.equal((await get(a.body.id)).f2, 'Sarwar');
+  assert.equal((await get(b.body.id)).f2, 'Md. Mosiar Rahman');
+  assert.equal((await get(c.body.id)).f1, 'Azmir');
+});

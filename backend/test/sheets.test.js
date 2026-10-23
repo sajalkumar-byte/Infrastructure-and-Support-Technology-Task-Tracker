@@ -74,7 +74,7 @@ async function login(email, password) {
 /* ===================================================================== */
 test('the spreadsheet gets a tab per table, each with a header row', () => {
   const titles = [...google.tabs.keys()].sort();
-  assert.deepEqual(titles, ['Archive', 'Audit', 'Items', 'Messages', 'Meta', 'Requests', 'Resets', 'Sessions', 'Users']);
+  assert.deepEqual(titles, ['Archive', 'Audit', 'Items', 'Messages', 'Meta', 'Requests', 'Resets', 'Sessions', 'Team', 'Users']);
 
   const header = google.tabs.get('Items').rows[0];
   assert.deepEqual(header.slice(0, 6), ['id', 'type', 'title', 's', 'pri', 'f1']);

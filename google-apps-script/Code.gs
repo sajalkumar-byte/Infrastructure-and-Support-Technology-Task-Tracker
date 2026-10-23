@@ -44,6 +44,7 @@ var SHEETS = {
   itemmeta: { name: 'Tracker Item Meta', headers: ['id', 'type', 'role', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'owned', 'ud'] },
   sessions: { name: 'Tracker Sessions', headers: ['tokenHash', 'email', 'createdAt', 'expiresAt', 'userAgent'] },
   requests: { name: 'Tracker Requests', headers: ['id', 'email', 'name', 'at'] },
+  team:     { name: 'Tracker Team',     headers: ['id', 'name', 'title', 'email', 'at', 'by'] },
   archive:  { name: 'Tracker Archive',  headers: ['id', 'rows', 'at'] },
   resets:   { name: 'Tracker Resets',   headers: ['email', 'codeHash', 'expiresAt', 'attempts', 'createdAt'] },
   audit:    { name: 'Tracker Audit',    headers: ['at', 'actor', 'role', 'action', 'target', 'detail'] },
@@ -953,6 +954,83 @@ var ACTIONS = {
       removeMessagesFor_(email);
       audit_('user.delete', ctx.user.email, ctx.user.role, email, rows[index].role);
       return { ok: true, email: email };
+    });
+  },
+
+  /* ---------- the team roster ----------
+
+     Who is on the team, with a designation and an email. Anyone signed in may read it - it
+     feeds the Team page and the Focal lists - but only the super admin may change it. */
+
+  listTeam: function () {
+    return { members: readTable_('team').filter(function (m) { return m.name; }) };
+  },
+
+  saveTeam: function (body, ctx) {
+    assertCan_(ctx.user.role, 'manageUsers');
+    return withLock_(function () {
+      var name = String(body.name || '').trim().slice(0, 120);
+      if (!name) throw fail_(400, 'bad_name', 'A name is required');
+      var id = String(body.id || '').trim() || ('m_' + name.toLowerCase().replace(/[^a-z0-9]+/g, '_'));
+      var record = {
+        id: id, name: name,
+        title: String(body.title || '').trim().slice(0, 120),
+        email: normaliseEmail_(body.email || ''),
+        at: String(body.at || '') || nowIso_().slice(0, 10),
+        by: ctx.user.email
+      };
+      var rows = readTable_('team');
+      for (var i = 0; i < rows.length; i++) {
+        if (String(rows[i].id) === id) {
+          updateRowAt_('team', i, record);
+          audit_('team.update', ctx.user.email, ctx.user.role, id, name);
+          return record;
+        }
+      }
+      appendRow_('team', record);
+      audit_('team.add', ctx.user.email, ctx.user.role, id, name);
+      return record;
+    });
+  },
+
+  deleteTeam: function (body, ctx) {
+    assertCan_(ctx.user.role, 'manageUsers');
+    return withLock_(function () {
+      var id = String(body.id || '');
+      var rows = readTable_('team');
+      for (var i = 0; i < rows.length; i++) {
+        if (String(rows[i].id) === id) {
+          deleteRowAt_('team', i);
+          audit_('team.remove', ctx.user.email, ctx.user.role, id, rows[i].name);
+          return { ok: true, id: id };
+        }
+      }
+      throw fail_(404, 'not_found', 'That person is not on the roster');
+    });
+  },
+
+  /** Rename somebody wherever they are Focal-1 or Focal-2, in one go. */
+  renamePerson: function (body, ctx) {
+    assertCan_(ctx.user.role, 'manageUsers');
+    var from = String(body.from || '').trim(), to = String(body.to || '').trim().slice(0, 120);
+    if (!from || !to) throw fail_(400, 'bad_name', 'Both the old and the new name are needed');
+    return withLock_(function () {
+      var same = function (a) { return String(a || '').trim().toLowerCase() === from.toLowerCase(); };
+      var rows = readTable_('items');
+      var count = 0;
+      for (var i = 0; i < rows.length; i++) {
+        var row = rows[i];
+        if (!same(row.f1) && !same(row.f2)) continue;
+        if (same(row.f1)) row.f1 = to;
+        if (same(row.f2)) row.f2 = to;
+        row.updatedAt = nowIso_();
+        row.updatedBy = ctx.user.email;
+        updateRowAt_('items', i, row);
+        count += 1;
+      }
+      if (count) bumpRev_();
+      audit_('team.rename', ctx.user.email, ctx.user.role, from, to + ' on ' + count + ' item(s)');
+      return { ok: true, count: count };
     });
   },
 
