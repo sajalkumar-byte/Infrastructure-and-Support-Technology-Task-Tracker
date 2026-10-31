@@ -37,6 +37,8 @@ body{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset
 .hero-fx:before{content:"";position:absolute;right:-60px;top:-90px;width:320px;height:320px;border-radius:50%;background:radial-gradient(#ffffff30,transparent 70%)}
 .hero-fx:after{content:"";position:absolute;left:38%;bottom:-130px;width:380px;height:380px;border-radius:50%;background:radial-gradient(#ffffff1a,transparent 70%)}
 .hero>*{position:relative;z-index:1}.hero>.hero-fx{position:absolute;z-index:0}
+/* the logo and title may narrow, so the controls keep their place at the right */
+.hero-brand{min-width:0}.hero-brand>div:not(.logo){min-width:0}.hero-brand>.logo{flex-shrink:0}
 /* The logo is a transparent PNG, so it sits straight on the header with nothing behind it.
    A faint shadow keeps the pink mark legible where the gradient is lightest. */
 .logo{height:64px;display:grid;place-items:center}
