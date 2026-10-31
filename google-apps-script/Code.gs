@@ -707,6 +707,19 @@ var ACTIONS = {
       }
 
       if (index === -1) {
+        /* The same create, arriving again. A browser re-sends a request by itself when the
+           connection drops before any reply - after the row was already written - and the page
+           re-sends a change it never heard back about. Each create carries a one-time key; one
+           seen in the last six hours gets the row it already made, not a second one. */
+        var clientKey = String(body.clientKey || '').slice(0, 80);
+        if (clientKey) {
+          var already = '';
+          try { already = CacheService.getScriptCache().get('ck:' + clientKey) || ''; } catch (err) {}
+          if (already) {
+            for (var k = 0; k < rows.length; k++) if (String(rows[k].id) === already) return itemOut_(rows[k]);
+          }
+        }
+
         /* Creating: the role must be allowed to write this type. */
         var type = String(input.type || '');
         assertWrite_(ctx.user.role, type);
@@ -722,6 +735,9 @@ var ACTIONS = {
         if (created.type === 'Drive') created.e = '';        // recurring: no end date
         appendRow_('items', created);
         bumpRev_();
+        if (clientKey) {
+          try { CacheService.getScriptCache().put('ck:' + clientKey, created.id, 21600); } catch (err) {}
+        }
         audit_('item.create', ctx.user.email, ctx.user.role, created.id, created.type + ': ' + created.title);
         return itemOut_(created);
       }

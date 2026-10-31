@@ -302,3 +302,19 @@ test('a meta tab laid out by an older version is read correctly and brought up t
   const header = spreadsheet.getSheetByName('Tracker Item Meta').getRange(1, 1, 1, 8).getValues()[0];
   assert.deepEqual(header, ['id', 'type', 'role', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'owned']);
 });
+
+test('the same create sent twice makes one row, and both answers name it', () => {
+  /* A browser re-sends a request by itself when the connection drops before the reply; the page
+     re-sends a change it never heard back about. Neither may become a second row. */
+  const { call, tokens, spreadsheet } = workbook();
+  const item = { type: 'Task', title: 'Sent twice', f1: 'Sohel', s: 'Ongoing', pri: 'Mid' };
+  const first = call('saveItem', { token: tokens.admin, item, clientKey: 'tmp-abc123' });
+  const again = call('saveItem', { token: tokens.admin, item, clientKey: 'tmp-abc123' });
+  assert.ok(!first.error && !again.error, JSON.stringify(first.error || again.error || {}));
+  assert.equal(again.id, first.id, 'the repeat is answered with the row already made');
+  assert.equal(spreadsheet.getSheetByName(TASKS).rows.filter(r => r[5] === 'Sent twice').length, 1);
+
+  /* A different key is a different create, even with the same words. */
+  const other = call('saveItem', { token: tokens.admin, item, clientKey: 'tmp-def456' });
+  assert.notEqual(other.id, first.id);
+});

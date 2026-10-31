@@ -379,12 +379,15 @@ const Presenter={
   const dl=box.querySelector('#u_dl');if(dl)dl.onclick=()=>{Exporter.saveText('users.js',View.usersFile(Model.users));View.toast('users.js downloaded – replace config/users.js in the repository')}},
 
  /* --- status line --- */
+ /* No running "N items synced" line: the data on screen is the message. Trouble reaching
+    the sheet is said once in a while, not every few seconds - the page keeps working from the
+    copy it has, and catches up by itself. */
  syncStatus(err){
-  if(err){View.status('Sync error: '+(err.code||''),false);return}
-  const n=Model.items.length;
-  if(this.isLocal()){View.status('',false);return}
-  if(this.isApi()){View.status('Live · '+n+' items synced',true);return}
-  View.status((Model.platWrite?'Live · ':'Live · read-only · ')+n+' items synced',true)},
+  if(!err)return;
+  const now=Date.now();if(this._syncToldAt&&now-this._syncToldAt<60000)return;this._syncToldAt=now;
+  View.toast(err.status===0||err.code==='offline'
+   ?'Cannot reach the sheet right now – showing the saved copy, changes will be sent when it answers'
+   :'Could not refresh: '+(err.message||err.code||'unknown problem'))},
 
  /* --- theme: light | dark | ocean (remembered in this browser) --- */
  setTheme(id,save=true){const t=this.THEMES.find(x=>x.id===id)||this.THEMES[0],h=document.documentElement;
@@ -459,6 +462,32 @@ const Presenter={
  /* --- is a server connected, and does the page say so --- */
  noticeOffline(detail,canRetry){View.setOfflineNotice(this.isLocal(),detail||'',!!canRetry)},
 
+ /* --- the backend this page talks to, wired up once --- */
+ adopt(store,health){
+  Model.store=store;
+  /* A backend that cannot send email says so in its health answer. */
+  store.emailReset=!!(health&&health.email);
+  store.onAuthLost=()=>{if(Model.session){Model.session=null;View.who(null,true);View.toast('Your session ended – please sign in again')}this.setGate('login')};
+  store.onNotice=msg=>View.toast(msg);
+  store.onError=e=>this.syncStatus(e);
+  const redraw=()=>{if(this.USERSM&&this.USERSM.isConnected)this.renderUsers(this.USERSM)};
+  Model.watchUsers(redraw);Model.watchReqs(redraw)},
+
+ rememberBackend(which){try{localStorage.setItem('tracker.backend',which)}catch(e){}},
+
+ /* After a warm start: ask the sheet who this really is, bring the data up to date, and send
+    anything left waiting from last time. All in the background - the page is already up. A
+    token the sheet no longer accepts ends the session the usual way. */
+ async verify(store){
+  try{const me=await store.me();const s=Model.session,u=me&&me.user;
+   if(u&&s&&(s.role!==u.role||s.name!==u.name)){
+    Model.session=Object.assign({},s,{role:u.role,name:u.name});View.who(Model.session,true);this.draw();
+    if(s.role!==u.role)View.toast('Your role is now '+ROLE_LBL[u.role])}}
+  catch(e){if(e&&(e.status===0||e.code==='offline'))this.syncStatus(e)}
+  if(Model.session){store.refreshAll();store.flush()}
+  /* The Node server, if somebody switches it on, is preferred from the next visit. */
+  if(typeof ApiStore!=='undefined')ApiStore.probe().then(h=>{if(h&&h.ok)this.rememberBackend('api')}).catch(()=>{})},
+
  /* --- boot: pick the storage backend, then gate on identity --- */
  async boot(){
   this.bindEvents();View.who(null,false);this.go('overview');
@@ -469,24 +498,31 @@ const Presenter={
         the server answers in milliseconds where Apps Script takes seconds, and it can hold a
         socket open where it is not running serverless. When it is not configured it says so
         plainly and the page carries on to the sheet, which is what happens today. */
+  /* 0. A copy from the last visit draws the page at once. Apps Script takes several seconds
+        for every request, and starting cold meant four of them in a row - the Node probe, the
+        sheet's health, who-am-I, the data - before anything appeared. With a copy kept in this
+        browser the page is up straight away and checks itself in the background. */
+  const preferApi=(()=>{try{return localStorage.getItem('tracker.backend')==='api'}catch(e){return false}})();
+  const g=window.GAS_URL&&typeof GasStore!=='undefined'?new GasStore():null;
+  if(g&&!preferApi){const warm=g.warmStart();
+   if(warm&&warm.user){this.adopt(g,{email:g.emailReset});this.signIn(warm.user,false);this.verify(g);return}}
+
+  /* 1. Otherwise every backend is asked at once rather than one after another, and with a
+        token in hand the sheet is asked who this is in the same breath. */
   let store=null,health=null,gasFailed=null;
-  if(typeof ApiStore!=='undefined'){health=await ApiStore.probe();if(health)store=new ApiStore()}
-  if(!store&&window.GAS_URL&&typeof GasStore!=='undefined'){const g=new GasStore();health=await g.probe();if(health)store=g;else gasFailed=g.lastError}
+  const apiP=typeof ApiStore!=='undefined'?ApiStore.probe().catch(()=>null):Promise.resolve(null);
+  const gasP=g?g.probe():Promise.resolve(null);
+  const meP=g&&g.token?g.call('me').catch(()=>null):Promise.resolve(null);
+  const apiH=await apiP;
+  if(apiH){store=new ApiStore();health=apiH;this.rememberBackend('api')}
+  else if(g){health=await gasP;if(health){store=g;this.rememberBackend('gas')}else gasFailed=g.lastError}
+  if(store&&store===g&&health){const me=await meP;
+   if(me&&me.user){g.session=me;g.adoptOutbox();g.emailReset=!!health.email;this.adopt(g,health);this.signIn(me.user,false);g.flush();return}}
   /* A configured Google Sheet that does not answer is a mistake worth showing, not hiding:
      without this the page would quietly fall back to this browser's own storage. */
   if(!store&&gasFailed){console.error('Google Sheets backend unavailable:',gasFailed);
    setTimeout(()=>View.toast('Google Sheet backend unavailable – using this device only. '+(gasFailed.message||'')),800)}
-  if(store&&health){
-   Model.store=store;
-   /* A backend that cannot send email says so in its health answer. */
-   store.emailReset=!!health.email;
-   store.onAuthLost=()=>{if(Model.session){Model.session=null;View.who(null,true);View.toast('Your session ended – please sign in again')}this.setGate('login')};
-   store.onNotice=msg=>View.toast(msg);
-   store.onError=e=>{if(e&&e.status===0)View.status('Server unreachable – retrying…',false)};
-   const redraw=()=>{if(this.USERSM&&this.USERSM.isConnected)this.renderUsers(this.USERSM)};
-   Model.watchUsers(redraw);Model.watchReqs(redraw);
-   await this.apiGate(health);
-   return}
+  if(store&&health){this.adopt(store,health);await this.apiGate(health);return}
 
   /* 2. otherwise: the claude.ai shared database, or this browser's own storage */
   let db=null;

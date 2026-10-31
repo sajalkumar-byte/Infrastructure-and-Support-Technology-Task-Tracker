@@ -159,6 +159,9 @@ tr.c td{transition:background .15s}
 .av.av-ic svg{width:60%;height:60%;display:block}
 /* The icon column in the Settings menu: one width whether it holds an emoji or an SVG. */
 .dropdown-item .mi{width:1.3em;flex:none;display:inline-flex;align-items:center;justify-content:center}
+/* An item changed here and not yet confirmed by the sheet. */
+.saving{font-size:.68rem;font-weight:600;color:#d97706;letter-spacing:.02em;animation:savingPulse 1.4s ease-in-out infinite}
+@keyframes savingPulse{0%,100%{opacity:1}50%{opacity:.45}}
 .badge.role{color:#fff;background:var(--c);font-size:.68rem}
 .roles{display:grid;gap:4px}
 
